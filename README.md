@@ -58,5 +58,5 @@ ruff check .
 | Member | Area |
 |---|---|
 | TBD | Backend (appointments, DB, auth), later Cloud/DevOps and Security |
-| TBD | Backend (triage, AI, PII redaction, metrics) |
+| Tilok Jahan | Backend (triage, AI, PII redaction, metrics) |
 | TBD | Frontend |
