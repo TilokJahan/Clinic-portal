@@ -45,3 +45,22 @@ def db(database_url: str):
     with _connect(database_url) as conn:
         conn.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
         yield conn
+
+
+@pytest.fixture
+def client(database_url: str, db):
+    """API client whose requests use the empty test schema instead of DATABASE_URL."""
+    from fastapi.testclient import TestClient
+    from psycopg.rows import dict_row
+
+    from app import db as app_db
+    from app.main import app
+
+    def test_conn():
+        with _connect(database_url) as conn:
+            conn.row_factory = dict_row
+            yield conn
+
+    app.dependency_overrides[app_db.get_conn] = test_conn
+    yield TestClient(app)
+    app.dependency_overrides.clear()
