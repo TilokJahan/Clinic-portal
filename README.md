@@ -41,7 +41,9 @@ Run a service's tests without Docker:
 cd services/appointment-service
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-pytest
+# Database tests need Postgres, e.g. `docker compose up -d db`, then:
+export TEST_DATABASE_URL=postgresql://clinic:local_dev_password_change_me@localhost:5432/clinic
+pytest            # without TEST_DATABASE_URL the database tests are skipped
 ruff check .
 ```
 
