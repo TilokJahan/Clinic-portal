@@ -6,3 +6,4 @@ for something meaningful. It takes 30 seconds and saves hours in Week 14.
 | Date | Who | Tool | What I asked for | What I used / changed | What I verified or fixed |
 |---|---|---|---|---|---|
 | 2026-10-09 | (name) | Claude | Project ideas, architecture, starter repo files | Adopted the clinic triage portal concept and repo layout | Checked service choices against the course rubric |
+| 2026-10-12 | Tabarek | Claude Code | Draft the PostgreSQL schema, seed data, schema tests and CI database (issue #2) | Used schema.sql, seed.sql, docs/schema.md and the CI Postgres service | Ran schema + seed on a fresh Postgres 16 and ran pytest (duplicate slot and double booking both rejected); reviewed the constraints |
