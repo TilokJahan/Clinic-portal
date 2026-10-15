@@ -126,19 +126,6 @@ def test_long_input_does_not_crash():
     assert "cough" in result.text
 
 
-# # Known gap: in our model comparison (scripts/compare_models.py) both spaCy models left this
-# # SSN in the text. The test is marked xfail so CI stays green while the gap is documented.
-# # Once a fallback is added (for example a regex for NNN-NN-NNNN), delete the xfail line.
-# @pytest.mark.xfail(
-#     reason="Presidio did not detect this SSN in our comparison; see docs/triage.md",
-#     strict=False,
-# )
-# def test_ssn_is_removed():
-#     result = redact("SSN 123-45-6789, short of breath")
-#     assert "123-45-6789" not in result.text
-#     assert "short of breath" in result.text
-
-
 @pytest.mark.parametrize(
     "text",
     [
