@@ -20,7 +20,8 @@ Roles: `patient`, `clinician`, `admin`.
 All times are ISO 8601 in UTC.
 
 `GET /slots?date=2030-01-07&provider_id=1`: `date` is required, `provider_id` is optional.
-Returns unbooked slots that start on that day, earliest first.
+Returns free slots that start on that day and haven't started yet, earliest first. A slot whose
+only appointments are cancelled counts as free.
 
 ```json
 [{"id": 1, "provider_id": 1, "starts_at": "2030-01-07T09:00:00Z", "ends_at": "2030-01-07T09:30:00Z"}]
@@ -33,7 +34,7 @@ once auth is in place.
 |---|---|---|
 | 201 | Booked | `{"id": 1, "patient_id": 1, "slot_id": 1, "status": "booked", "created_at": "..."}` |
 | 404 | Unknown slot, or the user isn't a patient | `{"detail": "Slot not found"}` / `{"detail": "Patient not found"}` |
-| 409 | Slot already booked | `{"detail": "Slot is already booked"}` |
+| 409 | Slot already booked, or already started | `{"detail": "Slot is already booked"}` / `{"detail": "Slot has already started"}` |
 | 422 | Invalid body | FastAPI validation error |
 
 ## Triage result (JSON)

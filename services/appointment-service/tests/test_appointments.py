@@ -5,7 +5,7 @@ import pytest
 
 @pytest.fixture
 def data(db):
-    """Two providers, three slots on 2030-01-07 plus one the next day, two patients."""
+    """Two providers, three slots on 2030-01-07, one the next day, one in the past, two patients."""
     db.execute(
         "INSERT INTO providers (name, specialty) VALUES "
         "('Dr. One', 'General Practice'), ('Dr. Two', 'Dermatology')"
@@ -21,7 +21,8 @@ def data(db):
             (1, '2030-01-07 09:00+00', '2030-01-07 09:30+00'),
             (1, '2030-01-07 09:30+00', '2030-01-07 10:00+00'),
             (2, '2030-01-07 09:00+00', '2030-01-07 09:30+00'),
-            (1, '2030-01-08 09:00+00', '2030-01-08 09:30+00')
+            (1, '2030-01-08 09:00+00', '2030-01-08 09:30+00'),
+            (1, '2020-01-06 09:00+00', '2020-01-06 09:30+00')
         """
     )
     return {"patient": 1, "other_patient": 2, "clinician": 3}
@@ -55,6 +56,19 @@ def test_booked_slots_are_hidden(client, data):
     assert [s["id"] for s in response.json()] == [3, 2]
 
 
+def test_past_slots_are_hidden(client, data):
+    assert client.get("/slots", params={"date": "2020-01-06"}).json() == []
+
+
+def test_cancelled_slot_is_listed_and_bookable_again(client, data, db):
+    assert _book(client, data["patient"], 1).status_code == 201
+    db.execute("UPDATE appointments SET status = 'cancelled' WHERE slot_id = 1")
+    response = client.get("/slots", params={"date": "2030-01-07"})
+    assert [s["id"] for s in response.json()] == [1, 3, 2]
+    assert _book(client, data["other_patient"], 1).status_code == 201
+    assert _book(client, data["patient"], 1).status_code == 409
+
+
 @pytest.mark.parametrize(
     "params",
     [{}, {"date": "07-01-2030"}, {"date": "2030-01-07", "provider_id": 0}],
@@ -79,6 +93,12 @@ def test_booking_the_same_slot_twice_returns_409(client, data):
     response = _book(client, data["other_patient"], 1)
     assert response.status_code == 409
     assert response.json() == {"detail": "Slot is already booked"}
+
+
+def test_booking_a_past_slot_returns_409(client, data):
+    response = _book(client, data["patient"], 5)
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Slot has already started"}
 
 
 def test_concurrent_bookings_only_one_wins(client, data):

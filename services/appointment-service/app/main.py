@@ -35,15 +35,19 @@ def list_slots(
     day: Annotated[date, Query(alias="date", description="Day to search, YYYY-MM-DD (UTC)")],
     provider_id: Annotated[int | None, Query(gt=0)] = None,
 ) -> list[Slot]:
-    """Unbooked slots that start on the given day, earliest first."""
+    """Free, upcoming slots that start on the given day, earliest first.
+
+    A slot is free if it has no appointment, or only cancelled ones.
+    """
     start = datetime.combine(day, time.min, tzinfo=UTC)
     rows = conn.execute(
         """
         SELECT s.id, s.provider_id, s.starts_at, s.ends_at
         FROM slots s
-        LEFT JOIN appointments a ON a.slot_id = s.id
+        LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
         WHERE a.id IS NULL
           AND s.starts_at >= %(start)s AND s.starts_at < %(end)s
+          AND s.starts_at > now()
           AND (%(provider_id)s::bigint IS NULL OR s.provider_id = %(provider_id)s)
         ORDER BY s.starts_at, s.provider_id
         """,
@@ -54,12 +58,16 @@ def list_slots(
 
 @app.post("/appointments", status_code=status.HTTP_201_CREATED)
 def book_appointment(conn: Conn, body: AppointmentCreate) -> Appointment:
-    """Book a slot. Returns 409 if someone already booked it."""
+    """Book a slot. Returns 409 if it is already booked or has already started."""
     try:
         with conn.transaction():
-            slot = conn.execute("SELECT 1 FROM slots WHERE id = %s", (body.slot_id,)).fetchone()
+            slot = conn.execute(
+                "SELECT starts_at > now() AS upcoming FROM slots WHERE id = %s", (body.slot_id,)
+            ).fetchone()
             if slot is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
+            if not slot["upcoming"]:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
             patient = conn.execute(
                 "SELECT 1 FROM users WHERE id = %s AND role = 'patient'", (body.patient_id,)
             ).fetchone()
@@ -73,7 +81,7 @@ def book_appointment(conn: Conn, body: AppointmentCreate) -> Appointment:
                 (body.patient_id, body.slot_id),
             ).fetchone()
     except errors.UniqueViolation as exc:
-        # The UNIQUE (slot_id) constraint catches double booking, including concurrent requests.
+        # The unique index on active appointments catches double booking, even concurrent ones.
         raise HTTPException(status.HTTP_409_CONFLICT, "Slot is already booked") from exc
     return Appointment(**row)
 
