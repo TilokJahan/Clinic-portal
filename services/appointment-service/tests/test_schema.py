@@ -53,6 +53,20 @@ def test_same_slot_cannot_be_booked_twice(db):
         )
 
 
+def test_cancelled_slot_can_be_booked_again(db):
+    slot_id = _add_slot(db, _add_provider(db))
+    first, second = _add_patient(db, "a@example.com"), _add_patient(db, "b@example.com")
+    db.execute(
+        "INSERT INTO appointments (patient_id, slot_id, status) VALUES (%s, %s, 'cancelled')",
+        (first, slot_id),
+    )
+    db.execute("INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s)", (second, slot_id))
+    with pytest.raises(errors.UniqueViolation):
+        db.execute(
+            "INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s)", (first, slot_id)
+        )
+
+
 @pytest.mark.parametrize(
     "sql",
     [
