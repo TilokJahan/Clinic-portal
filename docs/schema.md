@@ -7,7 +7,7 @@ Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/ap
 erDiagram
     users ||--o{ appointments : "books (patient)"
     providers ||--o{ slots : offers
-    slots ||--o| appointments : "booked by at most one"
+    slots ||--o{ appointments : "at most one not cancelled"
     appointments ||--o{ triage_results : has
 
     users {
@@ -32,7 +32,7 @@ erDiagram
     appointments {
         bigint id PK
         bigint patient_id FK
-        bigint slot_id FK,UK
+        bigint slot_id FK "unique among non-cancelled rows"
         text status "booked | checked_in | completed | cancelled"
         timestamptz created_at
     }
@@ -56,7 +56,7 @@ erDiagram
 | Rule | Constraint |
 |---|---|
 | A provider can't have two slots starting at the same time | `UNIQUE (provider_id, starts_at)` on `slots` |
-| A slot can be booked only once (blocks double booking, even when requests race) | `UNIQUE (slot_id)` on `appointments` |
+| A slot has at most one active appointment (blocks double booking, even when requests race). Cancelled rows don't count, so a cancelled slot can be booked again | partial unique index `appointments (slot_id) WHERE status <> 'cancelled'` |
 | Slots end after they start | `CHECK (ends_at > starts_at)` |
 | Role, status and urgency only take the listed values | `CHECK ... IN (...)` |
 | Every reference points at a real row | foreign keys on all `*_id` columns |
@@ -66,9 +66,9 @@ erDiagram
 - All times are `timestamptz` and stored in UTC. The frontend converts to local time.
 - `triage_results` also stores `suggested_specialty` and `red_flags`, so the full AI result
   from `docs/api.md` can be shown to the clinician later.
-- Because of `UNIQUE (slot_id)`, a cancelled appointment still holds its slot. If we want
-  cancelled slots to be bookable again, swap it for a partial unique index
-  (`WHERE status <> 'cancelled'`) or delete the row on cancel. To decide as a team.
+- Cancelling sets `status = 'cancelled'` instead of deleting the row, so the history is kept and
+  the slot becomes bookable again. Queries for free slots must ignore cancelled appointments
+  in the same way.
 
 ## Loading it locally
 

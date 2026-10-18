@@ -32,14 +32,17 @@ CREATE INDEX slots_starts_at_idx ON slots (starts_at);
 CREATE TABLE appointments (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     patient_id  BIGINT      NOT NULL REFERENCES users (id),
-    -- One appointment per slot: this constraint is what prevents double booking,
-    -- even when two requests race each other.
     slot_id     BIGINT      NOT NULL REFERENCES slots (id),
     status      TEXT        NOT NULL DEFAULT 'booked'
                 CHECK (status IN ('booked', 'checked_in', 'completed', 'cancelled')),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT appointments_slot_id_key UNIQUE (slot_id)
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- At most one non-cancelled appointment per slot. This index is what prevents double booking,
+-- even when two requests race each other. Cancelled rows are ignored, so a cancelled slot can
+-- be booked again while its history is kept.
+CREATE UNIQUE INDEX appointments_active_slot_key ON appointments (slot_id)
+    WHERE status <> 'cancelled';
 
 CREATE INDEX appointments_patient_id_idx ON appointments (patient_id);
 
