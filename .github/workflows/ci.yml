@@ -19,6 +19,23 @@ jobs:
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
+    # Throwaway database for tests that need PostgreSQL (CI-only credentials)
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,20 +62,57 @@ jobs:
       - name: Build image (no push yet)
         run: docker build -t ${{ matrix.service }}:ci services/${{ matrix.service }}
 
+  compose:
+    name: docker compose (fresh database)
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the stack the same way as a developer
+        run: |
+          cp .env.example .env
+          docker compose down -v
+          docker compose up --build --detach --wait --wait-timeout 180
+      - name: Services answer /health
+        run: |
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors             http://localhost:8001/health
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors             http://localhost:8002/health
+      - name: Schema and seed data were loaded
+        run: |
+          slots=$(docker compose exec -T db psql -U clinic -d clinic -tAc "SELECT count(*) FROM slots")
+          echo "seeded slots: $slots"
+          test "$slots" -gt 0
+      - name: GET /slots returns seeded slots
+        run: |
+          # Seed slots are on weekdays from tomorrow, so ask for the next weekday
+          day=$(date -u -d tomorrow +%F)
+          while [ "$(date -u -d "$day" +%u)" -gt 5 ]; do day=$(date -u -d "$day + 1 day" +%F); done
+          body=$(curl --fail --silent --show-error "http://localhost:8001/slots?date=$day")
+          echo "$body" | jq '.[0:3]'
+          test "$(echo "$body" | jq length)" -gt 0
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+
   frontend:
     name: frontend
     runs-on: ubuntu-latest
-    # Skipped until the Vite app exists in /frontend
-    if: ${{ hashFiles('frontend/package.json') != '' }}
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Skipped until the Vite app exists in /frontend. (hashFiles() can't be used in a
+      # job-level "if", which made GitHub reject this whole workflow file.)
+      - id: app
+        run: echo "exists=$([ -f package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.app.outputs.exists == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run build
+      - if: steps.app.outputs.exists == 'true'
+        run: npm ci
+      - if: steps.app.outputs.exists == 'true'
+        run: npm run build
