@@ -1,3 +1,4 @@
+import os
 from typing import Protocol
 
 from app.models import TriageResult, Urgency
@@ -31,3 +32,13 @@ class FakeTriageClient:
             red_flags=[],
             summary="No red-flag symptoms detected in the intake text.",
         )
+
+
+def get_client() -> TriageClient:
+    """Pick the triage client from the TRIAGE_CLIENT environment variable."""
+    name = os.getenv("TRIAGE_CLIENT", "fake").strip().lower()
+    if name == "fake":
+        return FakeTriageClient()
+    if name == "gemini":
+        raise NotImplementedError("The Gemini client is not built yet; use TRIAGE_CLIENT=fake")
+    raise ValueError(f"Unknown TRIAGE_CLIENT {name!r}. Use 'fake' or 'gemini'.")
