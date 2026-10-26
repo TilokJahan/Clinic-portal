@@ -33,7 +33,7 @@ class FakeTriageClient:
             summary="No red-flag symptoms detected in the intake text.",
         )
 
-    
+
 def get_client() -> TriageClient:
     """Pick the triage client from the TRIAGE_CLIENT environment variable."""
     name = os.getenv("TRIAGE_CLIENT", "fake").strip().lower()
