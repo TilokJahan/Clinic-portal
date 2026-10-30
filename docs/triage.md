@@ -100,3 +100,33 @@ The fallback has limits:
   numbers or insurance IDs are not covered.
 - A missed name or number (a false negative) is the serious failure, so the AI is described as
   decision support and a clinician always reviews its output. Only synthetic data is used.
+## Request flow
+
+`POST /triage` runs `redact()` first and passes **only the redacted text** to the triage client
+(`app/main.py`). The service logs metadata only: the urgency, which entity types were redacted
+and how long it took. Symptom text is never logged, before or after redaction. Both rules are
+covered by tests in `tests/test_triage.py`.
+
+The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no network) or `gemini`
+(not built yet).
+
+## Gemini prompt (design, issue #8)
+
+- **System prompt:** `app/prompts.py` (`SYSTEM_PROMPT`). It sets the role ("decision support,
+  not diagnosis"), defines `routine` / `soon` / `urgent` with examples, says to choose the more
+  urgent level when unsure, and tells the model to ignore redaction tokens. The JSON Schema in
+  the prompt is generated from `TriageResult`, so the prompt and the validator can't drift apart.
+- **User turn:** `build_user_prompt(redacted_text)` wraps the redacted text in `<<<` `>>>`.
+- **Validation:** the model's reply goes through `parse_llm_output()`. Invalid output falls back
+  to `soon` plus "review manually".
+- **Evaluation cases:** `tests/cases.json` has 15 synthetic descriptions with the expected urgency
+  (6 urgent, 5 soon, 4 routine), including stroke, self-harm, a vague message, and one with
+  personal details to check that redaction runs first. When the Gemini client exists, run every
+  case and compare against `expected_urgency`. An `urgent` case scored lower is the failure
+  that matters most.
+
+## Vertex AI project and region
+
+- **Region:** `us-central1` (`GCP_REGION` in `.env.example`). Gemini Flash is available there.
+- **Project:** the shared Google Cloud project recorded in `docs/cloud-accounts.md` (issue #4,
+  Backend A). Set it as `GCP_PROJECT_ID`. The service account needs the **Vertex AI User** role.
