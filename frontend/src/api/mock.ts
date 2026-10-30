@@ -35,7 +35,7 @@ function slotsFor(date: string): Slot[] {
       let id = slotByKey.get(key)
       if (id === undefined) {
         id = nextId++
-        const starts = new Date(day.getTime() + (9 * 60 + i * 30) * 60_000)
+        const starts = new Date(day.getTime() + (14 * 60 + i * 30) * 60_000)
         slots.set(id, {
           id, provider_id: p.id, provider_name: p.name, specialty: p.specialty,
           starts_at: starts.toISOString(), ends_at: new Date(starts.getTime() + 30 * 60_000).toISOString(),

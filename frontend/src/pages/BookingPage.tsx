@@ -56,7 +56,7 @@ export function BookingPage({ patientId }: { patientId: number }) {
   if (booked) return <><Header />
     <div className="panel form-panel success-panel"><div className="success-mark"><Check /></div>
       <h2>You’re on the calendar</h2>
-      <p>{booked.slot.provider_name}, {formatDateTime(booked.slot.starts_at)} ({timeZoneName}). Appointment #{booked.appointment.id}.</p>
+      <p>{booked.slot.provider_name}, {formatDateTime(booked.slot.starts_at)}. Appointment #{booked.appointment.id}.</p>
       <div className="hero-actions centered">
         <NavLink className="button button-primary" to={`/intake?appointment=${booked.appointment.id}`}>Describe your symptoms <ArrowRight size={16} /></NavLink>
         <button className="button button-secondary" onClick={() => { setBooked(null); setChosen(null); load() }}>Book another visit</button>
@@ -65,7 +65,7 @@ export function BookingPage({ patientId }: { patientId: number }) {
 
   return <><Header />
     <div className="panel form-panel">
-      <div className="form-step"><span>01</span><div><h2>Choose a date</h2><p>Weekdays, 9:00 to 12:00 UTC</p></div></div>
+      <div className="form-step"><span>01</span><div><h2>Choose a date</h2><p>Weekday mornings, 30-minute visits</p></div></div>
       <div className="booking-filters">
         <label className="date-choice"><CalendarDays size={18} />
           <input type="date" aria-label="Appointment date" value={date} min={todayInput()} onChange={(e) => setDate(e.target.value)} required />
@@ -77,7 +77,7 @@ export function BookingPage({ patientId }: { patientId: number }) {
           </select>
         </label>
       </div>
-      <div className="form-step"><span>02</span><div><h2>Choose a time</h2><p>Times shown in your time zone ({timeZoneName})</p></div></div>
+      <div className="form-step"><span>02</span><div><h2>Choose a time</h2><p>Times shown in your time zone ({timeZoneName(`${date}T12:00:00`)})</p></div></div>
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {slots === null
         ? <div className="empty-state"><Loader2 className="spin" size={18} /> Loading available times…</div>

@@ -2,15 +2,16 @@ import type { QueueEntry } from './types'
 
 // Display helpers. The API sends UTC ISO strings; everything is shown in the viewer's time zone.
 
-export const timeZoneName =
-  new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? 'local time'
+/** Short zone name in effect at that moment, e.g. "EDT" before and "EST" after daylight saving ends. */
+export const timeZoneName = (at: Date | string = new Date()) =>
+  new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(new Date(at)).find((p) => p.type === 'timeZoneName')?.value ?? 'local time'
 
 export const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
 export const formatDay = (iso: string) =>
   new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
 
-export const formatDateTime = (iso: string) => `${formatDay(iso)}, ${formatTime(iso)}`
+export const formatDateTime = (iso: string) => `${formatDay(iso)}, ${formatTime(iso)} ${timeZoneName(iso)}`
 
 export const todayLong = () =>
   new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()
