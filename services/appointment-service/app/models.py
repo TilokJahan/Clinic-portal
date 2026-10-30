@@ -14,6 +14,8 @@ class AppointmentStatus(StrEnum):
 class Slot(BaseModel):
     id: int
     provider_id: int
+    provider_name: str
+    specialty: str
     starts_at: datetime
     ends_at: datetime
 

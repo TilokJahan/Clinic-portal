@@ -36,7 +36,8 @@ Every change to this file goes through a pull request that all three of us revie
 **Slot**
 
 ```json
-{"id": 1, "provider_id": 1, "starts_at": "2030-01-07T09:00:00Z", "ends_at": "2030-01-07T09:30:00Z"}
+{"id": 1, "provider_id": 1, "provider_name": "Dr. Alex Example", "specialty": "General Practice",
+ "starts_at": "2030-01-07T09:00:00Z", "ends_at": "2030-01-07T09:30:00Z"}
 ```
 
 **Appointment**

@@ -54,8 +54,9 @@ def list_slots(
     start = datetime.combine(day, time.min, tzinfo=UTC)
     rows = conn.execute(
         """
-        SELECT s.id, s.provider_id, s.starts_at, s.ends_at
+        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at
         FROM slots s
+        JOIN providers p ON p.id = s.provider_id
         LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
         WHERE a.id IS NULL
           AND s.starts_at >= %(start)s AND s.starts_at < %(end)s
