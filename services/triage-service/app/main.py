@@ -8,6 +8,7 @@ from app.redaction import redact
 from app.triage_client import TriageClient, get_client
 
 # Log only metadata (entity types, timings). Never log symptom text, before or after redaction.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s %(message)s")
 logger = logging.getLogger("triage")
 
 app = FastAPI(title="Triage Service", version="0.1.0")
