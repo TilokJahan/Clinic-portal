@@ -90,6 +90,11 @@ jobs:
           body=$(curl --fail --silent --show-error "http://localhost:8001/slots?date=$day")
           echo "$body" | jq '.[0:3]'
           test "$(echo "$body" | jq length)" -gt 0
+      - name: Frontend is served and proxies the API
+        run: |
+          curl -sf http://localhost:8080/ | grep -q '<div id="root">'
+          curl -sf http://localhost:8080/queue | grep -q '<div id="root">'   # SPA fallback
+          curl -sf http://localhost:8080/api/health | grep -q appointment-service
       - name: Logs on failure
         if: failure()
         run: docker compose logs

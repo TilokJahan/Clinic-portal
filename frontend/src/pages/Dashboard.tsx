@@ -5,6 +5,11 @@ import { formatWait, todayLong, waitMinutes } from '../format'
 import { useQueue } from '../useQueue'
 import { LiveBadge, QueueRow } from './QueuePage'
 
+const greeting = () => {
+  const hour = new Date().getHours()
+  return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+}
+
 export function Dashboard() {
   const { queue, status } = useQueue()
   const items = queue ?? []
@@ -16,7 +21,7 @@ export function Dashboard() {
   const pct = (n: number) => `${items.length ? (n / items.length) * 100 : 0}%`
 
   return <>
-    <div className="welcome-row"><div><div className="eyebrow">{todayLong()}</div><h1>Good morning</h1><p>Here’s what’s happening at your clinic.</p></div></div>
+    <div className="welcome-row"><div><div className="eyebrow">{todayLong()}</div><h1>{greeting()}</h1><p>Here’s what’s happening at your clinic.</p></div></div>
     <section className="stat-grid">
       <Stat icon={<Users />} label="Waiting patients" value={String(items.length).padStart(2, '0')} note={`${items.length - triaged.length} still to send symptoms`} tone="mint" />
       <Stat icon={<ShieldCheck />} label="Needs attention" value={String(counts.urgent).padStart(2, '0')} note="urgent triage" tone="rose" />
