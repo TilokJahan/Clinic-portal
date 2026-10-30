@@ -6,14 +6,16 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 _pool: ConnectionPool | None = None
+_url: str | None = None
 
 
 def open_pool() -> None:
     """Create the connection pool from DATABASE_URL. Called once at app startup."""
-    global _pool
+    global _pool, _url
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
+    _url = url
     _pool = ConnectionPool(url, kwargs={"row_factory": dict_row}, open=True)
 
 
@@ -30,3 +32,14 @@ def get_conn() -> Iterator[psycopg.Connection]:
         raise RuntimeError("Database pool is not open")
     with _pool.connection() as conn:
         yield conn
+
+
+async def _connect_async() -> psycopg.AsyncConnection:
+    if _url is None:
+        raise RuntimeError("Database is not configured")
+    return await psycopg.AsyncConnection.connect(_url, autocommit=True, row_factory=dict_row)
+
+
+def get_async_connect():
+    """FastAPI dependency: a factory for a dedicated async connection (used for LISTEN)."""
+    return _connect_async
