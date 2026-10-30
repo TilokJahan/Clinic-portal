@@ -1,12 +1,11 @@
 from fastapi import FastAPI
 
 from app.models import TriageRequest, TriageResult
-from app.triage_client import FakeTriageClient, TriageClient
+from app.triage_client import TriageClient, get_client
 
 app = FastAPI(title="Triage Service", version="0.1.0")
 
-# TODO (Backend B): choose the client from TRIAGE_CLIENT ("fake" or "gemini").
-client: TriageClient = FakeTriageClient()
+client: TriageClient = get_client()
 
 
 @app.get("/health")
