@@ -58,6 +58,7 @@ CREATE TABLE triage_results (
     final_urgency        TEXT        CHECK (final_urgency IN ('routine', 'soon', 'urgent')),
     overridden           BOOLEAN     NOT NULL DEFAULT false,
     reviewed_at          TIMESTAMPTZ,
+    reviewed_by          BIGINT      REFERENCES users (id),
     -- Metrics for the AI call
     latency_ms           INTEGER     CHECK (latency_ms >= 0),
     tokens_used          INTEGER     CHECK (tokens_used >= 0),

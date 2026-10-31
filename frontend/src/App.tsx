@@ -13,15 +13,16 @@ import { useSession } from './session'
 const PAGE_NAMES: Record<string, string> = { '/queue': 'Patient queue', '/book': 'Appointments', '/intake': 'Symptom intake', '/login': 'Sign in' }
 
 function App() {
-  const [session, setSession] = useSession()
+  const { session, setSession, signOut } = useSession()
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
 
   if (!session) return <Routes><Route path="/login" element={<LoginPage onLogin={setSession} />} /><Route path="*" element={<Navigate to="/login" replace />} /></Routes>
 
-  const clinician = session.role === 'clinician'
-  const switchAccount = () => { setSession(null); navigate('/login') }
+  const { user } = session
+  const clinician = user.role !== 'patient'
+  const switchAccount = () => { signOut(); navigate('/login') }
   const close = () => setMobileOpen(false)
 
   return <div className="app-shell">
@@ -33,8 +34,8 @@ function App() {
         ? <nav className="nav-list" onClick={close}><NavLink to="/" end><LayoutDashboard size={18} />Overview</NavLink><NavLink to="/queue"><Users size={18} />Patient queue</NavLink></nav>
         : <nav className="nav-list" onClick={close}><NavLink to="/" end><HeartPulse size={18} />Home</NavLink><NavLink to="/book"><CalendarDays size={18} />Book a visit</NavLink><NavLink to="/intake"><Plus size={18} />Symptom intake</NavLink></nav>}
       <div className="sidebar-bottom">
-        <div className="help-card"><div className="help-icon"><CircleHelp size={17} /></div><b>Prototype</b><p>Synthetic data only. {apiMode === 'mock' ? 'Using the mock API (no backend).' : 'Connected to the clinic API.'}</p></div>
-        <div className="profile"><div className="profile-avatar">{clinician ? 'DR' : `P${session.userId}`}</div><div><b>{session.email}</b><span>{clinician ? 'Clinician' : 'Patient'}</span></div>
+        <div className="help-card"><div className="help-icon"><CircleHelp size={17} /></div><b>Synthetic data only</b><p>{apiMode === 'mock' ? 'Using the mock API (no backend).' : 'Connected to the clinic API.'} Never enter real patient information.</p></div>
+        <div className="profile"><div className="profile-avatar">{clinician ? 'DR' : `P${user.id}`}</div><div><b>{user.email}</b><span>{clinician ? 'Clinician' : 'Patient'}</span></div>
           <button className="icon-button" onClick={switchAccount} aria-label="Switch account" title="Switch account"><LogOut size={16} /></button></div>
       </div>
     </aside>
@@ -45,11 +46,11 @@ function App() {
         <div className="top-actions"><span className="role-chip">{clinician ? 'Clinician' : 'Patient'}</span><button className="button button-secondary switch-button" onClick={switchAccount}>Switch account</button></div>
       </header>
       <div className="page-content"><Routes>
-        <Route path="/" element={clinician ? <Dashboard /> : <PatientHome patientId={session.userId} />} />
+        <Route path="/" element={clinician ? <Dashboard /> : <PatientHome />} />
         <Route path="/login" element={<LoginPage onLogin={setSession} />} />
         <Route path="/queue" element={clinician ? <QueuePage /> : <Navigate to="/" replace />} />
-        <Route path="/book" element={clinician ? <Navigate to="/" replace /> : <BookingPage patientId={session.userId} />} />
-        <Route path="/intake" element={clinician ? <Navigate to="/" replace /> : <IntakePage patientId={session.userId} />} />
+        <Route path="/book" element={clinician ? <Navigate to="/" replace /> : <BookingPage />} />
+        <Route path="/intake" element={clinician ? <Navigate to="/" replace /> : <IntakePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes></div>
     </main>

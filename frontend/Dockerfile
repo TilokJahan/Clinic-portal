@@ -4,7 +4,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-ENV VITE_API_MODE=http
+# Cloud builds pass these (public web config, not secrets); local builds use dev sign-in
+ARG VITE_AUTH_MODE=dev
+ARG VITE_FIREBASE_API_KEY=
+ARG VITE_FIREBASE_AUTH_DOMAIN=
+ENV VITE_API_MODE=http VITE_AUTH_MODE=$VITE_AUTH_MODE     VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN
 RUN npm run build
 
 FROM nginx:1.27-alpine

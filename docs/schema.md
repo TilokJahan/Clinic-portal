@@ -6,6 +6,7 @@ Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/ap
 ```mermaid
 erDiagram
     users ||--o{ appointments : "books (patient)"
+    users ||--o{ triage_results : "reviews (clinician)"
     providers ||--o{ slots : offers
     slots ||--o{ appointments : "at most one not cancelled"
     appointments ||--o{ triage_results : has
@@ -46,6 +47,7 @@ erDiagram
         text final_urgency "NULL until a clinician reviews"
         boolean overridden
         timestamptz reviewed_at "set when a clinician reviews"
+        bigint reviewed_by FK "the clinician who decided"
         integer latency_ms
         integer tokens_used
         timestamptz created_at
