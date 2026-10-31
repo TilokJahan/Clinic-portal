@@ -194,3 +194,21 @@ def test_identity_platform_keeps_an_existing_role(people, db, monkeypatch):
     monkeypatch.setattr(auth, "_verify_identity_platform", lambda token: claims)
     db.row_factory = dict_row
     assert auth.decode("any", db).role == "clinician"
+
+
+def test_operator_lists_assign_staff_roles(people, db, monkeypatch):
+    monkeypatch.setenv("AUTH_MODE", "identity-platform")
+    monkeypatch.setenv("CLINICIAN_EMAILS", "new.doc@example.com, p2@example.com")
+    monkeypatch.setenv("ADMIN_EMAILS", "boss@example.com")
+    db.row_factory = dict_row
+
+    def sign_in(email):
+        monkeypatch.setattr(
+            auth, "_verify_identity_platform", lambda t: {"email": email, "email_verified": True}
+        )
+        return auth.decode("any", db).role
+
+    assert sign_in("New.Doc@example.com") == "clinician"  # first sign-in
+    assert sign_in("p2@example.com") == "clinician"  # existing patient promoted by the list
+    assert sign_in("boss@example.com") == "admin"
+    assert sign_in("someone@example.com") == "patient"

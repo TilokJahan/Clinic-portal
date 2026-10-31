@@ -6,7 +6,7 @@ Kustomize, one base and two overlays.
 |---|---|
 | `base/` | Appointment and triage services: Deployments, Services, probes, config, HPA, PDB, NetworkPolicy |
 | `overlays/local/` | A laptop cluster (kind): adds Postgres (seeded from `db/schema.sql` + `db/seed.sql`) and the frontend; dev sign-in, fake AI client |
-| `overlays/aks/` | Azure Kubernetes Service: images from ACR, secrets from Key Vault, Cloud SQL + Vertex AI through keyless Workload Identity Federation, HTTPS ingress |
+| `overlays/aks/` | Azure Kubernetes Service (applied by `.github/workflows/deploy.yml`): images from ACR, secrets from Key Vault, Cloud SQL + Vertex AI through keyless Workload Identity Federation, HTTPS ingress |
 
 ## What the base gives every pod
 
@@ -52,6 +52,8 @@ Google credentials: pod's Kubernetes token --(Workload Identity Federation)--> G
 - **No keys anywhere.** Azure access (Key Vault) uses AKS workload identity; Google access
   (Cloud SQL proxy, Vertex AI) exchanges the pod's Kubernetes token for short-lived Google
   credentials. `credential-config.json` only describes that exchange; it isn't secret.
+- **Database schema:** the `db-init` Job loads `db/schema.sql` and the synthetic seed into
+  Cloud SQL the first time (it skips when the tables exist).
 - **Per-deployment values** (registry, project, Key Vault name, identities, host name) are in
   `overlays/aks/cloud.env` and `credential-config.json`. The deploy workflow overwrites both from
   `terraform output` before applying, so the committed files keep placeholders.
