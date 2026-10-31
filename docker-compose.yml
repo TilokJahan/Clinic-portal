@@ -26,6 +26,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      triage-service:
+        condition: service_started
 
   triage-service:
     build: ./services/triage-service

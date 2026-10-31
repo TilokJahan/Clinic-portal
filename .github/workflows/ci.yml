@@ -90,6 +90,24 @@ jobs:
           body=$(curl --fail --silent --show-error "http://localhost:8001/slots?date=$day")
           echo "$body" | jq '.[0:3]'
           test "$(echo "$body" | jq length)" -gt 0
+      - name: Book, submit intake, see it in the queue, review it
+        run: |
+          day=$(date -u -d tomorrow +%F)
+          while [ "$(date -u -d "$day" +%u)" -gt 5 ]; do day=$(date -u -d "$day + 1 day" +%F); done
+          api=http://localhost:8001
+          slot=$(curl -sf "$api/slots?date=$day" | jq '.[0].id')
+          appt=$(curl -sf -X POST "$api/appointments" -H 'content-type: application/json'             -d "{\"patient_id\": 1, \"slot_id\": $slot}" | jq '.id')
+          # Goes through the real triage service (redaction + fake AI client)
+          triage=$(curl -sf -X POST "$api/intake" -H 'content-type: application/json'             -d "{\"appointment_id\": $appt, \"symptoms\": \"My name is Jane Doe, call 555-123-4567. Chest pain since this morning.\"}")
+          echo "$triage" | jq .
+          test "$(echo "$triage" | jq -r .ai_urgency)" = urgent
+          queue=$(curl -sf "$api/queue")
+          test "$(echo "$queue" | jq '.[0].appointment_id')" = "$appt"
+          id=$(echo "$triage" | jq .id)
+          reviewed=$(curl -sf -X PATCH "$api/triage/$id" -H 'content-type: application/json'             -d '{"final_urgency": "soon"}')
+          test "$(echo "$reviewed" | jq .overridden)" = true
+          # The live stream sends the current queue straight away
+          curl -sN --max-time 3 "$api/queue/stream" | head -c 300 | tee /dev/stderr | grep -q '^event: queue'
       - name: Logs on failure
         if: failure()
         run: docker compose logs
