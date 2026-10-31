@@ -30,4 +30,5 @@ def test_metrics_count_bookings_conflicts_and_use_route_templates(client, db):
     assert _value(after, conflict) - _value(before, conflict) == 1
     # Route templates, never raw ids, so labels can't hold data and don't explode
     assert 'route="/triage/{triage_id}"' in after
-    assert "12345" not in after
+    # The raw path must never become a label (timestamps can contain any digits, so match the path)
+    assert "/triage/12345" not in after
