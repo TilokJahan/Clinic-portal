@@ -33,15 +33,22 @@ docker buildx build --platform "$PLATFORMS" -t "$ACR/frontend:$TAG" --push \
   --build-arg VITE_ENTRA_AUTHORITY="$(out ENTRA_AUTHORITY)" \
   "$repo/frontend"
 
-echo "== Connect to AKS and install cert-manager"
-az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
+work=$(cd "$(mktemp -d)" && (pwd -W 2>/dev/null || pwd)) # C:/... on Git Bash, for kubectl.exe
+trap 'rm -rf "$work"' EXIT
+
+echo "== Connect to AKS (credentials go to a temporary file, not your ~/.kube/config)"
+export KUBECONFIG="$work/kubeconfig"
+az aks get-credentials --resource-group "$RG" --name "$AKS" --file "$KUBECONFIG" --overwrite-existing
+
+echo "== Install cert-manager"
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
 kubectl -n cert-manager rollout status deploy/cert-manager-webhook --timeout=180s
 
 echo "== Render the manifests with this deployment's values"
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-cp -r "$repo/infra" "$repo/services" "$work/" # keeps the relative paths to db/*.sql
+# Only the manifests and the SQL they reference, at the same relative paths
+mkdir -p "$work/infra" "$work/services/appointment-service"
+cp -r "$repo/infra/k8s" "$work/infra/"
+cp -r "$repo/services/appointment-service/db" "$work/services/appointment-service/"
 overlay="$work/infra/k8s/overlays/aks"
 tf output -raw cloud_env > "$overlay/cloud.env"
 sed -i "s|newName: REGISTRY/|newName: $ACR/|; s|newTag: latest|newTag: $TAG|" "$overlay/kustomization.yaml"

@@ -21,9 +21,9 @@ variable "location" {
 }
 
 variable "aks_node_size" {
-  description = "VM size of the single AKS node. Our Azure for Students subscription only has vCPU quota for B-series v2, and AKS only accepts the ARM ones there (B2ps_v2: 2 vCPU, 8 GB). Images are built for arm64 and amd64."
+  description = "VM size of the single AKS node. Our Azure for Students subscription only has vCPU quota for B-series v2, and AKS only accepts the ARM ones there. B4ps_v2 (4 vCPU, 16 GB): AKS system pods alone reserve ~1.2 CPU, so 2 vCPU didn't fit the app. Images are built for arm64 and amd64."
   type        = string
-  default     = "Standard_B2ps_v2"
+  default     = "Standard_B4ps_v2"
 }
 
 variable "postgres_sku" {

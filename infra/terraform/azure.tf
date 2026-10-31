@@ -153,11 +153,12 @@ resource "azurerm_kubernetes_cluster" "aks" {
   sku_tier            = "Free"
 
   default_node_pool {
-    name            = "system"
-    vm_size         = var.aks_node_size
-    node_count      = 1
-    os_disk_size_gb = 64
-    vnet_subnet_id  = azurerm_subnet.aks.id
+    name                        = "system"
+    temporary_name_for_rotation = "rotation" # lets Terraform change the VM size without a new cluster
+    vm_size                     = var.aks_node_size
+    node_count                  = 1
+    os_disk_size_gb             = 64
+    vnet_subnet_id              = azurerm_subnet.aks.id
 
     # Azure's default; one extra node during upgrades fits our vCPU quota
     upgrade_settings {
@@ -188,6 +189,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
   # Managed nginx ingress (the clinic-nginx controller in infra/k8s/overlays/aks)
   web_app_routing {
     dns_zone_ids = []
+    # The add-on's own default controller reserves half a CPU we don't use; we run clinic-nginx
+    default_nginx_controller = "None"
   }
 
   tags = local.tags

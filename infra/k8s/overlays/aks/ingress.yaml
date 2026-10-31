@@ -9,6 +9,10 @@ metadata:
 spec:
   ingressClassName: clinic-nginx
   controllerNamePrefix: clinic-nginx
+  # One replica is plenty for the demo; each reserves half a CPU
+  scaling:
+    minReplicas: 1
+    maxReplicas: 2
   loadBalancerAnnotations:
     service.beta.kubernetes.io/azure-dns-label-name: from-cloud-env
 ---
