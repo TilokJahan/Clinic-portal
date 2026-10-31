@@ -6,16 +6,16 @@ Everything runs on Azure (we dropped Google Cloud: the account couldn't be used)
 > **Never put passwords, keys, tokens, card numbers or subscription secrets in this file.**
 > IDs below are fine to share inside the team. Secrets go in Azure Key Vault.
 
-Status: **TODO**. Fill in the blanks (`____`) as each step is done, then tick the checklist.
+Status: **deployed 2026-10-31**. Remaining blanks: credit amount and expiry, teammate invites.
 
 ## Decision
 
 | | Azure |
 |---|---|
-| Hosted on whose account | ____ |
+| Hosted on whose account | Tabarek (tjs3201@wmich.edu) |
 | Offer / credit type | Azure for Students |
 | Subscription name | Azure for Students |
-| Subscription ID (not secret) | ____ |
+| Subscription ID (not secret) | e8fb3009-935e-458c-8a9f-5ddef82f3155 |
 | Starting credit | ____ |
 | Credit expiry date | ____ |
 | Region we use | `canadacentral` (the subscription only allows canadacentral, francecentral, belgiumcentral, denmarkeast, mexicocentral) |

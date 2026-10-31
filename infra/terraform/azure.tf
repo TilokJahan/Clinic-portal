@@ -153,8 +153,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
   sku_tier            = "Free"
 
   default_node_pool {
-    name                        = "system"
-    temporary_name_for_rotation = "rotation" # lets Terraform change the VM size without a new cluster
+    # "rotation" is the pool Terraform rotated to when we resized to 4 vCPU. Our regional quota (6
+    # vCPU) can't hold two 4-vCPU pools at once to rotate back, and AKS can't rename pools.
+    name                        = "rotation"
+    temporary_name_for_rotation = "system" # a future resize rotates through this name
     vm_size                     = var.aks_node_size
     node_count                  = 1
     os_disk_size_gb             = 64
@@ -267,12 +269,12 @@ resource "azurerm_user_assigned_identity" "workload" {
 }
 
 resource "azurerm_federated_identity_credential" "workload" {
-  for_each  = toset(local.workloads)
-  name      = each.value
-  parent_id = azurerm_user_assigned_identity.workload.id
-  audience  = ["api://AzureADTokenExchange"]
-  issuer    = azurerm_kubernetes_cluster.aks.oidc_issuer_url
-  subject   = "system:serviceaccount:${local.namespace}:${each.value}"
+  for_each                  = toset(local.workloads)
+  name                      = each.value
+  user_assigned_identity_id = azurerm_user_assigned_identity.workload.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = azurerm_kubernetes_cluster.aks.oidc_issuer_url
+  subject                   = "system:serviceaccount:${local.namespace}:${each.value}"
 }
 
 resource "azurerm_role_assignment" "workload" {

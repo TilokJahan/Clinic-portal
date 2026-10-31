@@ -116,7 +116,7 @@ our tenant.
 
 ## Cost
 
-Roughly, with the defaults: AKS control plane free + one `Standard_D2als_v7` node (~$55/month),
+Roughly, with the defaults: AKS control plane free + one `Standard_B4ps_v2` ARM node (~$50/month),
 PostgreSQL `B1ms` (~$15/month), ACR Basic (~$5/month), Key Vault and Entra External ID free at
 this scale (External ID is free for the first 50,000 monthly users), `gpt-5-mini` well under a
 cent per intake. The budget alert emails everyone at 25/50/80/100 % of `budget_amount_usd`.
@@ -131,6 +131,18 @@ az postgres flexible-server stop --resource-group rg-clinicportal --name psql-cl
 (`start` to resume; Azure restarts a stopped PostgreSQL server automatically after 7 days.)
 After the course: `terraform destroy`, then delete `rg-clinicportal-tfstate` and the external
 tenant.
+
+## What our Azure for Students subscription allowed (and what we did)
+
+| Limit we hit | Result |
+|---|---|
+| Only 5 regions allowed (policy) | Everything in `canadacentral`; Azure OpenAI in `francecentral` |
+| No chat-model quota in `canadacentral` | `gpt-5-mini` (500K TPM quota) in `francecentral` |
+| `B2s` not offered; 0 vCPU quota for D-series v7 | Only B-series v2 ARM sizes have quota and are accepted by AKS: one `Standard_B4ps_v2` node, images built for arm64 + amd64 |
+| 6 vCPUs per region in total | Can't run two 4-vCPU pools at once, so the node pool kept the name `rotation` from the resize (AKS can't rename pools) |
+| AKS system pods reserve ~1.2 CPU | 2 vCPU wasn't enough; the add-on's unused default ingress controller is off and ours runs 1 replica |
+| Tenant refuses GitHub OIDC credentials | Deploy with `infra/scripts/deploy.sh` |
+| External ID tenant refused (region policy); user consent to apps disabled | Live site uses the demo sign-in (`auth_mode = "dev"`); Entra External ID is ready in code |
 
 ## If something is blocked
 

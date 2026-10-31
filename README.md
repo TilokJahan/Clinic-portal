@@ -2,6 +2,8 @@
 
 Cloud Computing semester project. Patients book appointments and describe symptoms in plain language. An AI service (Azure OpenAI) turns the text into a structured triage result for the clinician, who can accept or override it. Clinic staff see a live queue dashboard.
 
+**Live demo:** https://clinicportal-wmu.canadacentral.cloudapp.azure.com (demo accounts, synthetic data; may be stopped between demos to save credits).
+
 > **Synthetic data only.** No real patient information is ever used. Security controls are "HIPAA-inspired", not a compliance claim. The AI is decision support, not diagnosis.
 
 ## Architecture (short version)
