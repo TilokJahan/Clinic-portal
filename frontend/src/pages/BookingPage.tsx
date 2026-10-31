@@ -4,10 +4,9 @@ import { ArrowRight, CalendarDays, Check, Loader2, ShieldCheck } from 'lucide-re
 import { api } from '../api'
 import { ErrorBanner } from '../components'
 import { formatDateTime, formatTime, nextWeekday, timeZoneName, todayInput } from '../format'
-import { rememberBooking } from '../session'
 import type { Appointment, Slot } from '../types'
 
-export function BookingPage({ patientId }: { patientId: number }) {
+export function BookingPage() {
   const [date, setDate] = useState(nextWeekday)
   const [providerId, setProviderId] = useState(0)
   const [slots, setSlots] = useState<Slot[] | null>(null)
@@ -36,10 +35,9 @@ export function BookingPage({ patientId }: { patientId: number }) {
     if (!chosen) return
     setBooking(true)
     setError('')
-    const result = await api.book(patientId, chosen.id)
+    const result = await api.book(chosen.id)
     setBooking(false)
     if (result.ok) {
-      rememberBooking({ appointmentId: result.data.id, patientId, startsAt: chosen.starts_at, providerName: chosen.provider_name })
       setBooked({ appointment: result.data, slot: chosen })
     } else if (result.status === 409) {
       // Someone else got there first (or the time has passed): show it and refresh the list

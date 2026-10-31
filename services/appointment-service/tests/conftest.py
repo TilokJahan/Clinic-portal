@@ -17,6 +17,10 @@ from pathlib import Path
 import psycopg
 import pytest
 
+# Dev-mode auth with a throwaway secret, so tests sign in with real tokens
+os.environ["AUTH_MODE"] = "dev"
+os.environ["AUTH_DEV_SECRET"] = "test-secret-for-pytest-only"
+
 DB_DIR = Path(__file__).resolve().parent.parent / "db"
 TEST_SCHEMA = "pytest_appointments"
 TABLES = "triage_results, appointments, slots, providers, users"
@@ -64,3 +68,11 @@ def client(database_url: str, db):
     app.dependency_overrides[app_db.get_conn] = test_conn
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+def as_user(user_id: int, role: str = "patient", email: str | None = None) -> dict[str, str]:
+    """Authorization header for a user that exists in the test database."""
+    from app.auth import CurrentUser, issue_dev_token
+
+    token = issue_dev_token(CurrentUser(user_id, email or f"user{user_id}@example.com", role))
+    return {"Authorization": f"Bearer {token}"}

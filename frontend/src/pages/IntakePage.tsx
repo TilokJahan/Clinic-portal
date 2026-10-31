@@ -1,18 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
 import { Activity, ArrowRight, Loader2, ShieldCheck } from 'lucide-react'
 import { api } from '../api'
 import { AiLabel, ErrorBanner, UrgencyPill } from '../components'
 import { formatDateTime } from '../format'
-import { bookingsFor } from '../session'
-import type { TriageRecord } from '../types'
+import type { MyAppointment, TriageRecord } from '../types'
 
 const MAX = 4000
 
-export function IntakePage({ patientId }: { patientId: number }) {
+export function IntakePage() {
   const [params] = useSearchParams()
-  const bookings = bookingsFor(patientId)
-  const [appointmentId, setAppointmentId] = useState(Number(params.get('appointment')) || bookings[0]?.appointmentId || 0)
+  const [bookings, setBookings] = useState<MyAppointment[] | null>(null)
+  const [appointmentId, setAppointmentId] = useState(Number(params.get('appointment')) || 0)
+  useEffect(() => {
+    api.myAppointments().then((r) => {
+      // Offer only upcoming visits that don't have an intake yet
+      const open = r.ok ? r.data.filter((a) => !a.intake_submitted && Date.parse(a.starts_at) > Date.now()) : []
+      setBookings(open)
+      setAppointmentId((current) => current || open[0]?.id || 0)
+    })
+  }, [])
   const [symptoms, setSymptoms] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -47,6 +54,8 @@ export function IntakePage({ patientId }: { patientId: number }) {
       <NavLink to="/" className="button button-primary">Back to home <ArrowRight size={16} /></NavLink>
     </div></>
 
+  if (bookings === null) return <>{header}<div className="panel form-panel empty-state"><Loader2 className="spin" size={18} /> Loading your appointments…</div></>
+
   if (!appointmentId) return <>{header}
     <div className="panel form-panel success-panel"><h2>Book a visit first</h2><p>Symptoms are sent with an appointment, so your care team can prepare for it.</p>
       <NavLink to="/book" className="button button-primary">Book an appointment <ArrowRight size={16} /></NavLink></div></>
@@ -55,8 +64,8 @@ export function IntakePage({ patientId }: { patientId: number }) {
     <form className="panel form-panel intake-form" onSubmit={submit}>
       <label>Appointment
         <select value={appointmentId} onChange={(e) => setAppointmentId(Number(e.target.value))}>
-          {bookings.every((b) => b.appointmentId !== appointmentId) && <option value={appointmentId}>Appointment #{appointmentId}</option>}
-          {bookings.map((b) => <option key={b.appointmentId} value={b.appointmentId}>{b.providerName}, {formatDateTime(b.startsAt)}</option>)}
+          {bookings.every((b) => b.id !== appointmentId) && <option value={appointmentId}>Appointment #{appointmentId}</option>}
+          {bookings.map((b) => <option key={b.id} value={b.id}>{b.provider_name}, {formatDateTime(b.starts_at)}</option>)}
         </select>
       </label>
       <label>Describe your symptoms

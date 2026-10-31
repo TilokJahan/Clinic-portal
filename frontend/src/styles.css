@@ -457,3 +457,8 @@ h2 { color: #183a55; }
   .booking-filters { grid-template-columns: 1fr; }
   .switch-button { display: none; }
 }
+.login-card form > p { margin-bottom: 18px; color: #829199; font-size: 13px; }
+.login-card form > label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 15px; color: #526158; font-size: 12px; font-weight: 700; }
+.login-notice { margin: 12px 0 0; padding: 10px 12px; color: #2f6b49; background: #eaf4ed; border-radius: 8px; font-size: 12px; }
+.text-button { display: block; margin: 12px auto 0; padding: 0; color: #0876b9; background: none; border: 0; font-size: 12px; font-weight: 700; }
+.login-card .error-banner { margin: 14px 0 0; }

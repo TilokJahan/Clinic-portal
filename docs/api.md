@@ -1,12 +1,15 @@
-# API Contract (v1, edit via pull request)
+# API Contract (v2, edit via pull request)
 
 Every change to this file goes through a pull request that all three of us review (#10).
 
 | Method | Path | Service | Role | Purpose | Status |
 |---|---|---|---|---|---|
 | GET | `/health` | all | none | Liveness check | done |
-| GET | `/slots?date=YYYY-MM-DD&provider_id=` | appointment | patient | List free slots | done |
+| POST | `/auth/dev-login` | appointment | none (dev only) | Demo token for a seed account | done |
+| GET | `/me` | appointment | any | The signed-in user | done |
+| GET | `/slots?date=YYYY-MM-DD&provider_id=` | appointment | any | List free slots | done |
 | POST | `/appointments` | appointment | patient | Book a slot | done |
+| GET | `/appointments` | appointment | patient | My bookings | done |
 | POST | `/intake` | appointment | patient | Submit symptoms (calls triage-service) | done |
 | GET | `/queue` | appointment | clinician | Waiting patients, most urgent first | done |
 | GET | `/queue/stream` | appointment | clinician | Server-Sent Events for live updates | done |
@@ -26,10 +29,9 @@ Every change to this file goes through a pull request that all three of us revie
 - **Privacy:** the queue shows a label such as `"Patient 0002"`, not names or emails. Symptom
   text is passed to the triage service (which redacts it before the AI) and is **not stored**;
   only the structured triage result is.
-- **Auth (not built yet):** the frontend will send `Authorization: Bearer <JWT>`. Roles are
-  `patient`, `clinician`, `admin`. Patients will get 401 without a token and 403 on clinician
-  endpoints. Until then, `patient_id` is sent in the body of `POST /appointments` and will move
-  into the token.
+- **Auth:** every endpoint except `/health` and `/auth/dev-login` needs
+  `Authorization: Bearer <token>`. Roles are `patient`, `clinician`, `admin` (admin can do
+  everything a clinician can). See [Authentication](#authentication).
 
 ## Shared shapes
 
@@ -87,6 +89,37 @@ Every change to this file goes through a pull request that all three of us revie
 }
 ```
 
+## Authentication
+
+The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the same either way.
+
+| Mode | Where | How you get a token |
+|---|---|---|
+| `dev` | local, docker compose, CI | `POST /auth/dev-login` with a seed account's email. Signed with `AUTH_DEV_SECRET`, valid 8 hours. No password: demo data only |
+| `identity-platform` | cloud | Sign in with Google Identity Platform (email + password) in the frontend and send the **ID token**. The backend checks Google's signature, issuer and audience (`GCP_PROJECT_ID`) and needs a verified email |
+
+- In `identity-platform` mode a first-time user is created as a `patient`. Clinicians and admins
+  are given the role in the `users` table (or with a `role` custom claim set by an admin before
+  their first sign-in). A token can never change an existing user's role.
+- `GET /queue/stream` also accepts the token as `?access_token=...`, because the browser's
+  `EventSource` can't send headers. Only that endpoint should use it.
+
+| Status | When | Body |
+|---|---|---|
+| 401 | No token, bad signature, expired, or unknown user | `{"detail": "Sign in required"}` / `{"detail": "Invalid or expired token"}` |
+| 403 | Signed in, but the role isn't allowed | `{"detail": "Not allowed for your role"}` |
+
+### `POST /auth/dev-login` (dev mode only)
+
+Body `{"email": "patient1@example.com"}`. Returns
+`{"access_token": "...", "token_type": "bearer", "user": {"id": 1, "email": "...", "role": "patient"}}`.
+401 for an unknown account; 404 when `AUTH_MODE` isn't `dev`.
+
+### `GET /me`
+
+Returns `{"id": 1, "email": "patient1@example.com", "role": "patient"}`. In
+`identity-platform` mode this is also where a first-time user is created.
+
 ## Endpoints
 
 ### `GET /slots?date=2030-01-07&provider_id=1`
@@ -100,18 +133,29 @@ counts as free.
 | 200 | Always, possibly `[]` |
 | 422 | Missing or invalid `date`, or `provider_id` < 1 |
 
-### `POST /appointments`
+### `POST /appointments` (patient)
 
-Body `{"patient_id": 1, "slot_id": 1}`. Returns the `Appointment`.
+Body `{"slot_id": 1}`. The patient is the signed-in user (any `patient_id` in the body is
+ignored). Returns the `Appointment`.
 
 | Status | When | Body |
 |---|---|---|
 | 201 | Booked | `Appointment` |
-| 404 | Unknown slot, or the user isn't a patient | `{"detail": "Slot not found"}` / `{"detail": "Patient not found"}` |
+| 404 | Unknown slot | `{"detail": "Slot not found"}` |
 | 409 | Slot already booked, or already started | `{"detail": "Slot is already booked"}` / `{"detail": "Slot has already started"}` |
 | 422 | Invalid body | validation error |
 
-### `POST /intake`
+### `GET /appointments` (patient)
+
+The signed-in patient's bookings that aren't cancelled, soonest first:
+
+```json
+[{"id": 7, "slot_id": 1, "status": "booked", "created_at": "2030-01-06T15:02:11Z",
+  "starts_at": "2030-01-07T09:00:00Z", "provider_name": "Dr. Alex Example",
+  "specialty": "General Practice", "intake_submitted": false}]
+```
+
+### `POST /intake` (patient)
 
 Body `{"appointment_id": 7, "symptoms": "Chest pain since this morning"}`. `symptoms` is 1 to
 4000 characters. The appointment service sends the text to the triage service, stores the result
@@ -120,23 +164,23 @@ and returns it. One intake per appointment.
 | Status | When | Body |
 |---|---|---|
 | 201 | Triaged and stored | `TriageRecord` |
-| 404 | Unknown appointment | `{"detail": "Appointment not found"}` |
+| 404 | Unknown appointment, or someone else's | `{"detail": "Appointment not found"}` |
 | 409 | Appointment is cancelled, or already has an intake | `{"detail": "Appointment is cancelled"}` / `{"detail": "Intake already submitted"}` |
 | 422 | Invalid body | validation error |
 
 If the triage service is down or returns something invalid, the intake still succeeds with a
 safe fallback: `urgency: "soon"` and a summary saying a clinician should review manually.
 
-### `GET /queue`
+### `GET /queue` (clinician)
 
 Returns `QueueEntry[]` for appointments that are `booked` or `checked_in`. Order: `urgent`, then
 `soon`, then `routine`; within the same urgency, whoever submitted their intake first; patients
 without an intake come last, by appointment time.
 
-### `GET /queue/stream`
+### `GET /queue/stream` (clinician)
 
 [Server-Sent Events](https://developer.mozilla.org/docs/Web/API/Server-sent_events)
-(`text/event-stream`). Use `new EventSource("/queue/stream")` in the browser.
+(`text/event-stream`). Use `new EventSource("/queue/stream?access_token=...")` in the browser.
 
 - On connect, and again after **any** change to appointments or triage results, the server sends
   the whole queue: `event: queue` with `data:` set to the same JSON array as `GET /queue`.
@@ -144,10 +188,11 @@ without an intake come last, by appointment time.
   `EventSource` ignores.
 - Changes are delivered through Postgres `LISTEN/NOTIFY`, so this works with several replicas.
 
-### `PATCH /triage/{id}`
+### `PATCH /triage/{id}` (clinician)
 
 Body `{"final_urgency": "soon"}`. Sending the AI's own urgency means "accept"; anything else is an
-override. Returns the updated `TriageRecord` with `reviewed_at` set.
+override. Returns the updated `TriageRecord` with `reviewed_at` set. The database also
+records which clinician decided (`reviewed_by`).
 
 | Status | When |
 |---|---|

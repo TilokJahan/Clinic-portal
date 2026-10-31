@@ -2,6 +2,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from tests.conftest import as_user
+
 
 @pytest.fixture
 def data(db):
@@ -29,11 +31,15 @@ def data(db):
 
 
 def _book(client, patient_id: int, slot_id: int):
-    return client.post("/appointments", json={"patient_id": patient_id, "slot_id": slot_id})
+    return client.post("/appointments", json={"slot_id": slot_id}, headers=as_user(patient_id))
+
+
+def _slots(client, **params):
+    return client.get("/slots", params=params, headers=as_user(1))
 
 
 def test_slots_for_a_day(client, data):
-    response = client.get("/slots", params={"date": "2030-01-07"})
+    response = _slots(client, date="2030-01-07")
     assert response.status_code == 200
     slots = response.json()
     assert [s["id"] for s in slots] == [1, 3, 2]
@@ -48,24 +54,24 @@ def test_slots_for_a_day(client, data):
 
 
 def test_slots_filtered_by_provider(client, data):
-    response = client.get("/slots", params={"date": "2030-01-07", "provider_id": 2})
+    response = _slots(client, date="2030-01-07", provider_id=2)
     assert [s["id"] for s in response.json()] == [3]
 
 
 def test_booked_slots_are_hidden(client, data):
     assert _book(client, data["patient"], 1).status_code == 201
-    response = client.get("/slots", params={"date": "2030-01-07"})
+    response = _slots(client, date="2030-01-07")
     assert [s["id"] for s in response.json()] == [3, 2]
 
 
 def test_past_slots_are_hidden(client, data):
-    assert client.get("/slots", params={"date": "2020-01-06"}).json() == []
+    assert _slots(client, date="2020-01-06").json() == []
 
 
 def test_cancelled_slot_is_listed_and_bookable_again(client, data, db):
     assert _book(client, data["patient"], 1).status_code == 201
     db.execute("UPDATE appointments SET status = 'cancelled' WHERE slot_id = 1")
-    response = client.get("/slots", params={"date": "2030-01-07"})
+    response = _slots(client, date="2030-01-07")
     assert [s["id"] for s in response.json()] == [1, 3, 2]
     assert _book(client, data["other_patient"], 1).status_code == 201
     assert _book(client, data["patient"], 1).status_code == 409
@@ -77,7 +83,7 @@ def test_cancelled_slot_is_listed_and_bookable_again(client, data, db):
     ids=["missing-date", "bad-date", "bad-provider"],
 )
 def test_slots_rejects_bad_query(client, params):
-    assert client.get("/slots", params=params).status_code == 422
+    assert client.get("/slots", params=params, headers=as_user(1)).status_code == 422
 
 
 def test_book_a_slot(client, data):
@@ -109,16 +115,30 @@ def test_concurrent_bookings_only_one_wins(client, data):
     assert codes == [201, 409]
 
 
-@pytest.mark.parametrize(
-    ("patient", "slot", "detail"),
-    [(1, 999, "Slot not found"), (999, 1, "Patient not found"), (3, 1, "Patient not found")],
-    ids=["unknown-slot", "unknown-patient", "not-a-patient"],
-)
-def test_book_unknown_slot_or_patient_returns_404(client, data, patient, slot, detail):
-    response = _book(client, patient, slot)
+def test_book_unknown_slot_returns_404(client, data):
+    response = _book(client, data["patient"], 999)
     assert response.status_code == 404
-    assert response.json() == {"detail": detail}
+    assert response.json() == {"detail": "Slot not found"}
+
+
+def test_booking_needs_a_signed_in_patient(client, data):
+    assert client.post("/appointments", json={"slot_id": 1}).status_code == 401
+    clinician = as_user(data["clinician"], role="clinician")
+    assert client.post("/appointments", json={"slot_id": 1}, headers=clinician).status_code == 403
+
+
+def test_token_for_a_user_that_no_longer_exists_returns_401(client, data):
+    response = _book(client, 999, 1)
+    assert response.status_code == 401
+
+
+def test_patient_id_in_the_body_is_ignored(client, data):
+    response = client.post(
+        "/appointments", json={"slot_id": 2, "patient_id": 2}, headers=as_user(data["patient"])
+    )
+    assert response.status_code == 201
+    assert response.json()["patient_id"] == data["patient"]
 
 
 def test_book_rejects_invalid_body(client):
-    assert client.post("/appointments", json={"slot_id": 1}).status_code == 422
+    assert client.post("/appointments", json={}, headers=as_user(1)).status_code == 422

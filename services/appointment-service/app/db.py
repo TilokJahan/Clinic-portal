@@ -1,5 +1,6 @@
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
@@ -24,6 +25,15 @@ def close_pool() -> None:
     if _pool is not None:
         _pool.close()
         _pool = None
+
+
+@contextmanager
+def connection() -> Iterator[psycopg.Connection]:
+    """A pooled connection for a short block of work outside a normal request."""
+    if _pool is None:
+        raise RuntimeError("Database pool is not open")
+    with _pool.connection() as conn:
+        yield conn
 
 
 def get_conn() -> Iterator[psycopg.Connection]:
