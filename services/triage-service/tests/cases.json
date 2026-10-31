@@ -1,0 +1,92 @@
+[
+  {
+    "id": "chest-pain-exertion",
+    "symptoms": "Crushing pressure in my chest for the last 30 minutes, it spreads to my left arm and I'm sweating.",
+    "expected_urgency": "urgent",
+    "notes": "Classic possible cardiac presentation."
+  },
+  {
+    "id": "stroke-signs",
+    "symptoms": "My husband's face looks droopy on one side and his speech is slurred since lunch.",
+    "expected_urgency": "urgent",
+    "notes": "Stroke warning signs (FAST)."
+  },
+  {
+    "id": "breathing-difficulty",
+    "symptoms": "I can't catch my breath even sitting still and my lips look a bit blue.",
+    "expected_urgency": "urgent",
+    "notes": "Severe shortness of breath."
+  },
+  {
+    "id": "thunderclap-headache",
+    "symptoms": "Sudden worst headache of my life about an hour ago, came on in seconds, and my neck is stiff.",
+    "expected_urgency": "urgent",
+    "notes": "Sudden severe headache is a red flag."
+  },
+  {
+    "id": "self-harm",
+    "symptoms": "I've been feeling hopeless for weeks and last night I started thinking about ending my life.",
+    "expected_urgency": "urgent",
+    "notes": "Self-harm risk must always be urgent."
+  },
+  {
+    "id": "fever-three-days",
+    "symptoms": "Fever around 39C for three days, body aches, and I'm very tired. Drinking fluids okay.",
+    "expected_urgency": "soon",
+    "notes": "Persistent fever without red flags."
+  },
+  {
+    "id": "uti-symptoms",
+    "symptoms": "Burning when I pee and needing to go all the time since yesterday. No fever.",
+    "expected_urgency": "soon",
+    "notes": "Likely infection, should be seen within a day or two."
+  },
+  {
+    "id": "ankle-injury",
+    "symptoms": "Twisted my ankle playing football this morning, it's swollen and painful to walk on.",
+    "expected_urgency": "soon",
+    "notes": "Injury that limits activity; may need imaging."
+  },
+  {
+    "id": "worsening-ear-pain",
+    "symptoms": "My ear has hurt for four days and it's getting worse, some fluid came out this morning.",
+    "expected_urgency": "soon",
+    "notes": "Worsening infection signs."
+  },
+  {
+    "id": "vague-text",
+    "symptoms": "not feeling right",
+    "expected_urgency": "soon",
+    "notes": "Too vague to judge: the prompt says choose soon."
+  },
+  {
+    "id": "mild-cold",
+    "symptoms": "Runny nose, sneezing and a scratchy throat for two days. No fever, eating and sleeping fine.",
+    "expected_urgency": "routine",
+    "notes": "Common cold."
+  },
+  {
+    "id": "medication-refill",
+    "symptoms": "I need a refill of my usual blood pressure tablets, I feel well and readings are normal.",
+    "expected_urgency": "routine",
+    "notes": "Administrative request, stable patient."
+  },
+  {
+    "id": "mild-rash",
+    "symptoms": "Small itchy dry patch on my elbow for a month, not spreading, no other symptoms.",
+    "expected_urgency": "routine",
+    "notes": "Long-standing minor skin issue."
+  },
+  {
+    "id": "seasonal-allergies",
+    "symptoms": "Itchy eyes and sneezing every spring, same as every year, antihistamines help a bit.",
+    "expected_urgency": "routine",
+    "notes": "Known seasonal pattern."
+  },
+  {
+    "id": "pii-with-chest-pain",
+    "symptoms": "My name is Jane Doe, call me at 555-123-4567. I have chest pain when I climb stairs.",
+    "expected_urgency": "urgent",
+    "notes": "Checks redaction runs before the model and red flags still win."
+  }
+]
