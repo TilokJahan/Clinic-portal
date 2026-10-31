@@ -71,10 +71,10 @@ Write down anything that blocked us and what we did instead, for example:
 
 ## Checklist (issue #4)
 
-- [ ] Decided which Azure subscription hosts the shared resources
+- [x] Decided which Azure subscription hosts the shared resources
 - [x] Other two teammates added as Contributor
 - [ ] Each teammate confirmed they can see the resource group
-- [ ] Budget alerts active on Azure
+- [x] Budget alerts active on Azure (Terraform: $50/month, 25/50/80/100 %, to tjs3201@wmich.edu)
 - [ ] Expiry dates, owners and restrictions filled in above
 
 ---
