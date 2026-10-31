@@ -1,0 +1,7 @@
+# Never convert line endings in binary files
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+# Shell scripts must keep LF to run in Linux containers and CI
+*.sh text eol=lf
