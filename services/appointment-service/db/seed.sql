@@ -13,13 +13,13 @@ INSERT INTO providers (name, specialty) VALUES
     ('Dr. Sam Sample', 'Dermatology'),
     ('Dr. Jordan Test', 'Cardiology');
 
--- 30-minute slots, 09:00-12:00 UTC, on weekdays for the next 14 days, for every provider.
+-- 30-minute slots, 14:00-17:00 UTC (9:00-12:00 US Eastern standard time), on weekdays for the next 14 days, for every provider.
 -- Relative to the current date so a fresh database always has bookable future slots.
 INSERT INTO slots (provider_id, starts_at, ends_at)
 SELECT p.id, s.starts_at, s.starts_at + interval '30 minutes'
 FROM providers p
 CROSS JOIN LATERAL (
-    SELECT (d + interval '9 hours' + n * interval '30 minutes') AT TIME ZONE 'UTC' AS starts_at
+    SELECT (d + interval '14 hours' + n * interval '30 minutes') AT TIME ZONE 'UTC' AS starts_at
     FROM generate_series(
         (current_date + 1)::timestamp, (current_date + 14)::timestamp, interval '1 day'
     ) AS d

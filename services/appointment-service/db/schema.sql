@@ -57,10 +57,29 @@ CREATE TABLE triage_results (
     -- What the clinician decided. NULL until reviewed.
     final_urgency        TEXT        CHECK (final_urgency IN ('routine', 'soon', 'urgent')),
     overridden           BOOLEAN     NOT NULL DEFAULT false,
+    reviewed_at          TIMESTAMPTZ,
     -- Metrics for the AI call
     latency_ms           INTEGER     CHECK (latency_ms >= 0),
     tokens_used          INTEGER     CHECK (tokens_used >= 0),
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX triage_results_appointment_id_idx ON triage_results (appointment_id);
+-- One intake (and so one triage result) per appointment. The symptom text itself is never stored.
+CREATE UNIQUE INDEX triage_results_appointment_id_key ON triage_results (appointment_id);
+
+-- Live queue updates: any change to appointments or triage results sends a NOTIFY on the
+-- "queue_changed" channel. GET /queue/stream LISTENs on it, so every replica sees every change.
+CREATE FUNCTION notify_queue_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_notify('queue_changed', TG_TABLE_NAME);
+    RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER appointments_queue_changed
+    AFTER INSERT OR UPDATE OR DELETE ON appointments
+    FOR EACH STATEMENT EXECUTE FUNCTION notify_queue_changed();
+
+CREATE TRIGGER triage_results_queue_changed
+    AFTER INSERT OR UPDATE OR DELETE ON triage_results
+    FOR EACH STATEMENT EXECUTE FUNCTION notify_queue_changed();
