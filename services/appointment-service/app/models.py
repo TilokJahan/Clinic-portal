@@ -52,6 +52,7 @@ class TriageAssessment(BaseModel):
     suggested_specialty: str
     red_flags: list[str] = []
     summary: str
+    tokens_used: int | None = None  # reported by the Gemini client; None for the fake
 
 
 class TriageRecord(BaseModel):
@@ -66,6 +67,7 @@ class TriageRecord(BaseModel):
     red_flags: list[str]
     summary: str
     latency_ms: int | None
+    tokens_used: int | None = None
     created_at: datetime
     reviewed_at: datetime | None
 

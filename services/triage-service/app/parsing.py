@@ -28,7 +28,7 @@ def _fallback(reason: str) -> TriageOutcome:
             urgency=FALLBACK_URGENCY,
             suggested_specialty="General Practice",
             red_flags=[],
-            summary="Automatic triage was unavailable. " \
+            summary="Automatic triage was unavailable. "
             "A clinician should review this intake manually.",
         ),
         fallback_reason=reason,

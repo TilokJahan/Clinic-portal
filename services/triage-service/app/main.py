@@ -3,7 +3,8 @@ import time
 
 from fastapi import FastAPI
 
-from app.models import TriageRequest, TriageResult
+from app.gemini_client import ClientReply
+from app.models import TriageRequest, TriageResponse
 from app.redaction import redact
 from app.triage_client import TriageClient, get_client
 
@@ -21,16 +22,24 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "triage-service"}
 
 
-@app.post("/triage", response_model=TriageResult)
-def triage(request: TriageRequest) -> TriageResult:
+@app.post("/triage")
+def triage(request: TriageRequest) -> TriageResponse:
     """Redact private details, then ask the triage client. The client never sees the original."""
     started = time.perf_counter()
     redacted = redact(request.symptoms)
-    result = client.triage(redacted.text)
+    reply = client.triage(redacted.text)
+    if not isinstance(reply, ClientReply):  # simple clients (fake, tests) return a bare result
+        reply = ClientReply(reply)
     logger.info(
-        "triage done urgency=%s redacted_entities=%s duration_ms=%d",
-        result.urgency,
+        "triage done urgency=%s redacted_entities=%s fallback=%s tokens=%s duration_ms=%d",
+        reply.result.urgency,
         ",".join(redacted.entities) or "none",
+        reply.fallback_reason or "no",
+        reply.tokens_used,
         (time.perf_counter() - started) * 1000,
     )
-    return result
+    return TriageResponse(
+        **reply.result.model_dump(),
+        tokens_used=reply.tokens_used,
+        fallback=reply.fallback_reason is not None,
+    )

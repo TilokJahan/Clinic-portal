@@ -64,6 +64,7 @@ Every change to this file goes through a pull request that all three of us revie
   "red_flags": ["possible cardiac or respiratory emergency"],
   "summary": "Potentially serious symptom reported. Clinician review needed now.",
   "latency_ms": 41,
+  "tokens_used": 512,
   "created_at": "2030-01-06T15:05:00Z",
   "reviewed_at": null
 }
@@ -210,9 +211,15 @@ client. Returns:
   "urgency": "routine | soon | urgent",
   "suggested_specialty": "General Practice",
   "red_flags": ["..."],
-  "summary": "One paragraph for the clinician."
+  "summary": "One paragraph for the clinician.",
+  "tokens_used": 512,
+  "fallback": false
 }
 ```
+
+`tokens_used` is reported by the Gemini client (`null` for the fake client). `fallback` is
+`true` when the model failed or answered invalidly and the safe default (`soon`, "review
+manually") was returned instead. The appointment service stores `tokens_used` with the result.
 
 ## Tables
 
