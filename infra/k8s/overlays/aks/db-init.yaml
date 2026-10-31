@@ -1,6 +1,6 @@
-# Loads db/schema.sql and the synthetic db/seed.sql into Azure Database for PostgreSQL the first
-# time only (skips if the users table exists). The database is only reachable inside the virtual
-# network. The deploy workflow re-creates this Job on every deploy.
+# First deploy: loads db/schema.sql, the migrations and the synthetic seed into Azure Database
+# for PostgreSQL. Later deploys: applies only the migrations (written to be safe to re-run).
+# The database is only reachable inside the virtual network. Re-created on every deploy.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,10 +24,13 @@ spec:
             - |
               set -euo pipefail
               if [ "$(psql "$DATABASE_URL" -tAc "select to_regclass('public.users') is not null")" = t ]; then
-                echo "schema already present, nothing to do"
+                for f in /sql/02-schemav*.sql; do
+                  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f" && echo "applied $(basename "$f")"
+                done
               else
-                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /sql/01-schema.sql -f /sql/02-seed.sql
-                echo "schema and seed loaded"
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /sql/01-schema.sql \
+                  -f /sql/02-schemav2_lab_results.sql -f /sql/03-seed.sql
+                echo "schema, migrations and seed loaded"
               fi
           env:
             - name: DATABASE_URL

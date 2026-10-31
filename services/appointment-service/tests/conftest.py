@@ -23,7 +23,7 @@ os.environ["AUTH_DEV_SECRET"] = "test-secret-for-pytest-only"
 
 DB_DIR = Path(__file__).resolve().parent.parent / "db"
 TEST_SCHEMA = "pytest_appointments"
-TABLES = "triage_results, appointments, slots, providers, users"
+TABLES = "lab_results, lab_reports, triage_results, appointments, slots, providers, users"
 
 
 def _connect(url: str) -> psycopg.Connection:
@@ -39,7 +39,9 @@ def database_url() -> str:
         conn.execute(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE")
         conn.execute(f"CREATE SCHEMA {TEST_SCHEMA}")
     with _connect(url) as conn:
-        conn.execute((DB_DIR / "schema.sql").read_text())
+        # schema.sql, then the migrations (schemav2_..., ...) in order, like docker compose
+        for path in sorted(DB_DIR.glob("schema*.sql")):
+            conn.execute(path.read_text())
     return url
 
 

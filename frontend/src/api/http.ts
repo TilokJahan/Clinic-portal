@@ -11,17 +11,27 @@ function describe(detail: unknown, status: number): string {
   return `Request failed (${status})`
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
-  let response: Response
+async function send(path: string, init?: RequestInit, json = true): Promise<Response | null> {
   try {
     const token = await getToken()
-    response = await fetch(`${BASE}${path}`, {
+    return await fetch(`${BASE}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
+      headers: {
+        ...(json ? { 'Content-Type': 'application/json' } : {}), // FormData sets its own type
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
     })
   } catch {
-    return { ok: false, status: 0, detail: 'Cannot reach the clinic server. Please try again.' }
+    return null
   }
+}
+
+const unreachable = { ok: false as const, status: 0, detail: 'Cannot reach the clinic server. Please try again.' }
+
+async function request<T>(path: string, init?: RequestInit, json = true): Promise<ApiResult<T>> {
+  const response = await send(path, init, json)
+  if (!response) return unreachable
   const body = await response.json().catch(() => null)
   if (response.status === 401) endSession() // expired or revoked: back to the sign-in page
   if (!response.ok) return { ok: false, status: response.status, detail: describe(body?.detail, response.status) }
@@ -66,4 +76,19 @@ export const httpApi: Api = {
     return () => { closed = true; clearTimeout(retry); source?.close() }
   },
   review: (triageId, finalUrgency) => request(`/triage/${triageId}`, json('PATCH', { final_urgency: finalUrgency })),
+  uploadLabReport(appointmentId, file) {
+    const form = new FormData()
+    form.append('file', file)
+    return request(`/appointments/${appointmentId}/lab-reports`, { method: 'POST', body: form }, false)
+  },
+  labReports: (appointmentId) => request(`/appointments/${appointmentId}/lab-reports`),
+  approveLabExplanation: (reportId, text) =>
+    request(`/lab-reports/${reportId}`, json('PATCH', { patient_explanation: text })),
+  async labReportFile(reportId) {
+    const response = await send(`/lab-reports/${reportId}/file`, undefined, false)
+    if (!response) return unreachable
+    if (response.status === 401) endSession()
+    if (!response.ok) return { ok: false, status: response.status, detail: `Request failed (${response.status})` }
+    return { ok: true, data: await response.blob() }
+  },
 }

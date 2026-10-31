@@ -1,5 +1,5 @@
 import { sessionUser } from '../session'
-import type { Api, ApiResult, Appointment, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
+import type { Api, ApiResult, Appointment, LabReport, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
 
 // In-memory stand-in for the appointment service, shaped exactly like docs/api.md.
 // Synthetic data only. Used by `npm run dev`; `npm run dev:api` talks to the real backend.
@@ -21,6 +21,8 @@ const slots = new Map<number, Slot>()
 const slotByKey = new Map<string, number>()
 const appointments: Appointment[] = []
 const triage: TriageRecord[] = []
+const labReports: LabReport[] = []
+const labFiles = new Map<number, Blob>()
 // The first slot of each day with Dr. Alex Example is "taken by someone else": it is still
 // listed, but booking it returns 409, so the conflict message can be demoed.
 const takenByOthers = new Set<number>()
@@ -78,10 +80,20 @@ function queue(): QueueEntry[] {
         appointment_id: a.id, patient_label: `Patient ${String(a.patient_id).padStart(4, '0')}`,
         provider_id: slot.provider_id, provider_name: slot.provider_name, starts_at: slot.starts_at,
         status: a.status, booked_at: a.created_at, triage: triage.find((t) => t.appointment_id === a.id) ?? null,
-      }
+        lab: null, urgency: null,
+      } as QueueEntry
+    })
+    .map((e) => {
+      const report = labReports.filter((r) => r.appointment_id === e.appointment_id).slice(-1)[0]
+      const lab = report ? { report_id: report.id, status: report.status, urgency: report.lab_urgency, reason: report.reason, explanation_approved: report.explanation_approved } : null
+      const t = e.triage
+      const decidedAfterLab = t?.reviewed_at && (!report?.processed_at || t.reviewed_at >= report.processed_at)
+      const candidates = [t?.urgency, lab?.urgency].filter(Boolean) as Urgency[]
+      const highest = candidates.sort((x, y) => ORDER[x] - ORDER[y])[0] ?? null
+      return { ...e, lab, urgency: decidedAfterLab ? t!.final_urgency : highest }
     })
     .sort((x, y) => {
-      const ux = x.triage ? ORDER[x.triage.urgency] : 3, uy = y.triage ? ORDER[y.triage.urgency] : 3
+      const ux = x.urgency ? ORDER[x.urgency] : 3, uy = y.urgency ? ORDER[y.urgency] : 3
       if (ux !== uy) return ux - uy
       if (x.triage && y.triage) return x.triage.created_at.localeCompare(y.triage.created_at)
       return x.starts_at.localeCompare(y.starts_at)
@@ -89,6 +101,12 @@ function queue(): QueueEntry[] {
 }
 
 const notify = () => listeners.forEach((l) => l(queue()))
+
+/** What a patient may see: nothing but the status until a clinician approves. */
+function patientView(r: LabReport): LabReport {
+  if (!r.explanation_approved) return { ...r, lab_urgency: null, reason: null, clinician_summary: null, patient_explanation: null, extraction_confidence: null, results: [] }
+  return { ...r, clinician_summary: null, reason: null }
+}
 
 // Seed a few waiting patients for the clinician screens
 ;(function seed() {
@@ -156,6 +174,49 @@ export const mockApi: Api = {
     onStatus('live')
     setTimeout(() => onQueue(queue()), 0)
     return () => { listeners.delete(onQueue) }
+  },
+  async uploadLabReport(appointmentId, file) {
+    await pause(500)
+    const appt = appointments.find((a) => a.id === appointmentId && a.patient_id === mockPatientId())
+    if (!appt) return fail(404, 'Appointment not found')
+    if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type)) return fail(415, 'Upload a PDF, PNG or JPEG')
+    if (file.size > 10 * 1024 * 1024) return fail(413, 'The file is over 10 MB')
+    // The mock "reads" every report as the synthetic critical-potassium example
+    const report: LabReport = {
+      id: nextId++, appointment_id: appointmentId, content_type: file.type, status: 'ready',
+      uploaded_at: new Date().toISOString(), processed_at: new Date().toISOString(),
+      lab_urgency: 'urgent', reason: 'Critical: potassium 6.8 mmol/L',
+      clinician_summary: 'Potassium critically high at 6.8 mmol/L; creatinine mildly raised. Other results in range.',
+      patient_explanation: 'We checked the salts and kidney markers in your blood. Your potassium was higher than the usual range, and one kidney marker was a little high. Your care team will contact you today about next steps.',
+      explanation_approved: false, explanation_approved_at: null, extraction_confidence: 0.97,
+      results: [
+        { display_name: 'Potassium', test_name: 'Potassium', canonical: 'potassium', value: 6.8, unit: 'mmol/L', ref_low: 3.5, ref_high: 5.1, flag: 'critical_high', confidence: 0.98, needs_verification: false, verification_reason: null },
+        { display_name: 'Creatinine', test_name: 'Creatinine', canonical: 'creatinine', value: 1.9, unit: 'mg/dL', ref_low: 0.6, ref_high: 1.2, flag: 'high', confidence: 0.97, needs_verification: false, verification_reason: null },
+        { display_name: 'Sodium', test_name: 'Sodium', canonical: 'sodium', value: 136, unit: 'mmol/L', ref_low: 135, ref_high: 145, flag: 'normal', confidence: 0.99, needs_verification: false, verification_reason: null },
+      ],
+    }
+    labReports.push(report)
+    labFiles.set(report.id, file)
+    notify()
+    return ok(patientView(report))
+  },
+  async labReports(appointmentId) {
+    await pause(150)
+    const own = appointments.some((a) => a.id === appointmentId && a.patient_id === mockPatientId())
+    const reports = labReports.filter((r) => r.appointment_id === appointmentId).reverse()
+    return ok(own ? reports.map(patientView) : reports.map((r) => ({ ...r })))
+  },
+  async approveLabExplanation(reportId, text) {
+    await pause(200)
+    const report = labReports.find((r) => r.id === reportId)
+    if (!report) return fail(404, 'Lab report not found')
+    Object.assign(report, { patient_explanation: text, explanation_approved: true, explanation_approved_at: new Date().toISOString() })
+    notify()
+    return ok({ ...report })
+  },
+  async labReportFile(reportId) {
+    const file = labFiles.get(reportId)
+    return file ? ok(file) : fail(404, 'Lab report not found')
   },
   async review(triageId, finalUrgency) {
     await pause(200)

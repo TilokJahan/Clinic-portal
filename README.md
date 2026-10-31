@@ -1,6 +1,6 @@
 # Clinic Appointment and AI Triage Portal
 
-Cloud Computing semester project. Patients book appointments and describe symptoms in plain language. An AI service (Azure OpenAI) turns the text into a structured triage result for the clinician, who can accept or override it. Clinic staff see a live queue dashboard.
+Cloud Computing semester project. Patients book appointments and describe symptoms in plain language. An AI service (Azure OpenAI) turns the text into a structured triage result for the clinician, who can accept or override it. Patients can also attach a lab report: Azure AI Document Intelligence reads it, fixed rules flag high, low and critical values, and the AI drafts summaries a clinician approves. Clinic staff see a live queue dashboard.
 
 **Live demo:** https://clinicportal-wmu.canadacentral.cloudapp.azure.com (demo accounts, synthetic data; may be stopped between demos to save credits).
 
@@ -11,7 +11,7 @@ Cloud Computing semester project. Patients book appointments and describe sympto
 Everything runs on **Microsoft Azure** (Canada Central):
 
 - **Compute:** AKS (frontend + both services), Container Registry
-- **Data and AI:** Azure Database for PostgreSQL Flexible Server (private network only), Azure OpenAI (`gpt-5-mini` in France Central, keyless)
+- **Data and AI:** Azure Database for PostgreSQL Flexible Server (private network only), Azure OpenAI (`gpt-5-mini` in France Central, keyless), Azure AI Document Intelligence (lab report OCR, free tier), Blob Storage (lab report files)
 - **Identity and secrets:** Microsoft Entra External ID (patient sign-up/sign-in), Key Vault, workload identity
 - **Delivery and operations:** GitHub Actions (CI/CD with OIDC), Terraform (azurerm), Azure Storage (Terraform state), Prometheus + Grafana
 
@@ -28,6 +28,7 @@ Diagram and deployment steps: [infra/README.md](infra/README.md).
 | API contract (every endpoint, auth, errors) | [docs/api.md](docs/api.md) |
 | Database schema | [docs/schema.md](docs/schema.md) |
 | Triage: redaction, AI prompt, evaluation | [docs/triage.md](docs/triage.md) |
+| Lab results: OCR, unit conversion, critical-value rules, approval | [docs/labs.md](docs/labs.md) |
 | Security and privacy controls | [docs/security.md](docs/security.md) |
 | Monitoring (metrics, Grafana) | [docs/monitoring.md](docs/monitoring.md) |
 | Infrastructure and deployment | [infra/README.md](infra/README.md), [infra/k8s/README.md](infra/k8s/README.md) |

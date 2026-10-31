@@ -11,3 +11,5 @@ en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_
 openai==1.109.1
 azure-identity==1.27.0
 prometheus-client==0.21.0
+pypdf==5.9.0
+azure-ai-documentintelligence==1.0.2

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import db, metrics
+from app import db, labs, metrics
 from app.auth import (
     AnyUser,
     Clinician,
@@ -46,6 +46,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
+app.include_router(labs.router)
 
 # Only needed if the frontend is ever served from another origin (compose, kind and AKS are all
 # same-origin through nginx). List allowed origins, comma separated, in CORS_ALLOWED_ORIGINS.

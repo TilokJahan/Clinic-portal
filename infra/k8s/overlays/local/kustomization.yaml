@@ -22,7 +22,8 @@ configMapGenerator:
   - name: postgres-init
     files:
       - 01-schema.sql=../../../../services/appointment-service/db/schema.sql
-      - 02-seed.sql=../../../../services/appointment-service/db/seed.sql
+      - 02-schemav2_lab_results.sql=../../../../services/appointment-service/db/schemav2_lab_results.sql
+      - 03-seed.sql=../../../../services/appointment-service/db/seed.sql
 secretGenerator:
   # Local-only throwaway values. Real secrets come from Azure Key Vault (see overlays/aks).
   - name: clinic-secrets

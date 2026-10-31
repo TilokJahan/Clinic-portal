@@ -132,6 +132,43 @@ resource "azurerm_cognitive_deployment" "triage" {
   }
 }
 
+# --- Lab reports: private Blob Storage + Azure AI Document Intelligence (OCR), both keyless -------
+
+resource "azurerm_storage_account" "labs" {
+  name                            = "${var.prefix}labs"
+  resource_group_name             = azurerm_resource_group.main.name
+  location                        = azurerm_resource_group.main.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+  shared_access_key_enabled       = false # Entra ID only: the pods use workload identity
+  tags                            = local.tags
+
+  blob_properties {
+    delete_retention_policy {
+      days = 7 # an accidental delete can be undone for a week
+    }
+  }
+}
+
+resource "azurerm_storage_container" "lab_reports" {
+  name                  = "lab-reports"
+  storage_account_id    = azurerm_storage_account.labs.id
+  container_access_type = "private"
+}
+
+resource "azurerm_cognitive_account" "docintel" {
+  name                  = "di-${var.prefix}"
+  resource_group_name   = azurerm_resource_group.main.name
+  location              = azurerm_resource_group.main.location
+  kind                  = "FormRecognizer" # Azure AI Document Intelligence
+  sku_name              = "F0"             # free: 500 pages a month, plenty for the demo
+  custom_subdomain_name = "di-${var.prefix}"
+  local_auth_enabled    = false # no keys: Entra ID only
+  tags                  = local.tags
+}
+
 # --- Images ------------------------------------------------------------------------------------
 
 resource "azurerm_container_registry" "acr" {
@@ -281,6 +318,8 @@ resource "azurerm_role_assignment" "workload" {
   for_each = {
     key_vault = { scope = azurerm_key_vault.kv.id, role = "Key Vault Secrets User" }
     openai    = { scope = azurerm_cognitive_account.openai.id, role = "Cognitive Services OpenAI User" }
+    lab_files = { scope = azurerm_storage_account.labs.id, role = "Storage Blob Data Contributor" }
+    docintel  = { scope = azurerm_cognitive_account.docintel.id, role = "Cognitive Services User" }
   }
   scope                = each.value.scope
   role_definition_name = each.value.role
