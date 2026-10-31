@@ -108,6 +108,12 @@ jobs:
           test "$(echo "$reviewed" | jq .overridden)" = true
           # The live stream sends the current queue straight away
           curl -sN --max-time 3 "$api/queue/stream" | head -c 300 | tee /dev/stderr | grep -q '^event: queue'
+      - name: Frontend is served and proxies the API
+        run: |
+          curl -sf http://localhost:8080/ | grep -q '<div id="root">'
+          curl -sf http://localhost:8080/queue | grep -q '<div id="root">'   # SPA fallback
+          curl -sf http://localhost:8080/api/health | grep -q appointment-service
+          curl -sN --max-time 3 http://localhost:8080/api/queue/stream | head -c 200 | grep -q '^event: queue'
       - name: Logs on failure
         if: failure()
         run: docker compose logs
