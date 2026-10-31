@@ -1,0 +1,122 @@
+name: Deploy
+
+# Runs after CI passes on main (or by hand). Does nothing until the cloud exists and the GitHub
+# variables are set by infra/scripts/export-github-vars.sh (see infra/README.md).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC token for Azure login: no stored cloud secrets
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy to Azure + Google Cloud
+    if: >-
+      vars.AZURE_CLIENT_ID != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+      ACR: ${{ vars.ACR_LOGIN_SERVER }}
+      API_HOST: ${{ vars.API_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push images
+        run: |
+          az acr login --name "${ACR%%.*}"
+          for s in appointment-service triage-service; do
+            docker build -t "$ACR/$s:$TAG" "services/$s"
+            docker push "$ACR/$s:$TAG"
+          done
+
+      - name: Connect to AKS and install cert-manager
+        run: |
+          az aks get-credentials --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AKS_NAME }}" --overwrite-existing
+          kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+          kubectl -n cert-manager rollout status deploy/cert-manager-webhook --timeout=180s
+
+      - name: Fill in cloud values and image tags
+        working-directory: infra/k8s/overlays/aks
+        env:
+          CLOUD_ENV: ${{ vars.CLOUD_ENV }}
+          GCP_CREDENTIAL_CONFIG: ${{ vars.GCP_CREDENTIAL_CONFIG }}
+        run: |
+          printf '%s\n' "$CLOUD_ENV" > cloud.env
+          printf '%s\n' "$GCP_CREDENTIAL_CONFIG" > credential-config.json
+          for s in appointment-service triage-service; do
+            yq -i "(.images[] | select(.name == \"$s\")) |= (.newName = \"$ACR/$s\" | .newTag = \"$TAG\")" kustomization.yaml
+          done
+
+      - name: Apply manifests and load the database schema
+        run: |
+          kubectl kustomize infra/k8s/overlays/aks --load-restrictor=LoadRestrictionsNone > aks.yaml
+          kubectl -n clinic-portal delete job db-init --ignore-not-found
+          kubectl apply -f aks.yaml
+          kubectl -n clinic-portal wait --for=condition=complete job/db-init --timeout=300s
+          kubectl -n clinic-portal logs job/db-init -c psql
+          # Config changes don't change the pod spec, so restart to pick them up
+          kubectl -n clinic-portal rollout restart deploy/appointment-service deploy/triage-service
+          kubectl -n clinic-portal rollout status deploy/appointment-service --timeout=300s
+          kubectl -n clinic-portal rollout status deploy/triage-service --timeout=300s
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the frontend for the cloud
+        working-directory: frontend
+        env:
+          VITE_API_MODE: http
+          VITE_API_BASE: https://${{ vars.API_HOST }}
+          VITE_AUTH_MODE: identity-platform
+          VITE_FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Get the Static Web App deployment token
+        id: swa
+        run: |
+          token=$(az staticwebapp secrets list --name "${{ vars.STATIC_WEB_APP_NAME }}" \
+            --query properties.apiKey -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the frontend to Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swa.outputs.token }}
+          action: upload
+          app_location: frontend/dist
+          skip_app_build: true
+          skip_api_build: true
+
+      - name: Smoke test
+        run: |
+          # The certificate can take a minute to be issued on the first deploy
+          curl -sf --retry 20 --retry-delay 15 --retry-all-errors "https://$API_HOST/health"
+          curl -sf "https://$API_HOST/ready"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "https://$API_HOST/queue")" = 401

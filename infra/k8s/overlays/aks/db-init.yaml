@@ -1,0 +1,78 @@
+# Loads db/schema.sql and the synthetic db/seed.sql into Cloud SQL the first time only
+# (skips if the users table exists). Runs through a Cloud SQL Auth Proxy sidecar with the same
+# keyless Google credentials as the app. The deploy workflow re-creates it on every deploy.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: db-init
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: appointment-service
+      restartPolicy: Never
+      initContainers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+          restartPolicy: Always
+          args: ["--structured-logs", "--port=5432", "from-cloud-env"]
+          env:
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/run/gcp/credential-config.json
+          volumeMounts:
+            - name: gcp-credentials
+              mountPath: /var/run/gcp
+              readOnly: true
+      containers:
+        - name: psql
+          image: postgres:16
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
+              if [ "$(psql "$DATABASE_URL" -tAc "select to_regclass('public.users') is not null")" = t ]; then
+                echo "schema already present, nothing to do"
+              else
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /sql/01-schema.sql -f /sql/02-seed.sql
+                echo "schema and seed loaded"
+              fi
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: clinic-secrets
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+            - name: key-vault
+              mountPath: /mnt/secrets
+              readOnly: true
+      volumes:
+        - name: sql
+          configMap:
+            name: db-schema
+        - name: key-vault
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: clinic-key-vault
+        - name: gcp-credentials
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: from-cloud-env
+                  expirationSeconds: 3600
+                  path: token
+              - configMap:
+                  name: gcp-credential-config
+                  items:
+                    - key: credential-config.json
+                      path: credential-config.json

@@ -6,20 +6,37 @@ Cloud Computing semester project. Patients book appointments and describe sympto
 
 ## Architecture (short version)
 
-- **Azure:** Static Web Apps (frontend), AKS (containerized services), Key Vault (secrets)
-- **Google Cloud:** Cloud SQL for PostgreSQL, Vertex AI (Gemini Flash), Cloud Storage, Identity Platform
-- **Cross-cloud:** GitHub Actions (CI/CD with OIDC), Terraform (azurerm + google), Prometheus + Grafana
+- **Azure:** Static Web Apps (frontend), AKS (containerized services), Key Vault (secrets), Container Registry
+- **Google Cloud:** Cloud SQL for PostgreSQL, Vertex AI (Gemini Flash), Identity Platform (sign-in), Cloud Storage (Terraform state)
+- **Cross-cloud:** GitHub Actions (CI/CD with OIDC), Terraform (azurerm + google), Prometheus + Grafana, keyless access between clouds (Workload Identity Federation)
+
+Diagram and deployment steps: [infra/README.md](infra/README.md).
+
+## Documentation
+
+| Topic | File |
+|---|---|
+| API contract (every endpoint, auth, errors) | [docs/api.md](docs/api.md) |
+| Database schema | [docs/schema.md](docs/schema.md) |
+| Triage: redaction, Gemini prompt, evaluation | [docs/triage.md](docs/triage.md) |
+| Security and privacy controls | [docs/security.md](docs/security.md) |
+| Monitoring (metrics, Grafana) | [docs/monitoring.md](docs/monitoring.md) |
+| Infrastructure and deployment | [infra/README.md](infra/README.md), [infra/k8s/README.md](infra/k8s/README.md) |
+| Cloud accounts and budgets | [docs/cloud-accounts.md](docs/cloud-accounts.md) |
+| Screens | [docs/wireframes](docs/wireframes/README.md) |
+| AI-usage log | [docs/ai-usage-log.md](docs/ai-usage-log.md) |
 
 ## Repo layout
 
 ```
-services/appointment-service/   FastAPI: slots, booking, queue, SSE stream
-services/triage-service/        FastAPI: PII redaction -> Gemini -> validated result
-shared/                         code shared by services (auth, DB models, config)
-frontend/                       React + Vite app
+services/appointment-service/   FastAPI: auth, slots, booking, intake, queue + SSE stream, review
+services/triage-service/        FastAPI: PII redaction -> Gemini (Vertex AI) -> validated result
+frontend/                       React + Vite app (patient and clinician screens)
 infra/terraform/                Terraform for Azure + GCP
-infra/k8s/                      Kubernetes manifests
-docs/                           API contract, architecture, AI-usage log
+infra/k8s/                      Kubernetes manifests (kind for local, AKS for the cloud)
+infra/monitoring/               Prometheus + Grafana for docker compose
+docs/                           API contract, schema, security, monitoring, AI-usage log
+shared/                         reserved for code shared by services (empty so far)
 ```
 
 ## Run locally (no cloud needed)
@@ -31,9 +48,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
+- **App: http://localhost:8080** — pick a demo patient or clinician (synthetic accounts)
 - Appointment service: http://localhost:8001/health  (API docs: http://localhost:8001/docs)
 - Triage service: http://localhost:8002/health  (API docs: http://localhost:8002/docs)
 - Postgres: localhost:5432 (user/password/db from `.env`)
+
+Add monitoring with `docker compose --profile monitoring up --build` (Grafana on
+http://localhost:3000, Prometheus on http://localhost:9090). To try the Kubernetes manifests on
+your laptop, see [infra/k8s/README.md](infra/k8s/README.md). After changing `db/schema.sql`,
+reset the database with `docker compose down -v`.
+
+The frontend alone, without any backend: `cd frontend && npm install && npm run dev` (mock API).
 
 Run a service's tests without Docker:
 
@@ -59,6 +84,6 @@ ruff check .
 
 | Member | Area |
 |---|---|
-| TBD | Backend (appointments, DB, auth), later Cloud/DevOps and Security |
-| Tilok Jahan | Backend (triage, AI, PII redaction, metrics) |
-| TBD | Frontend |
+| Tabarek (@Tabarek92) | Backend (appointments, DB, auth), Cloud/DevOps and Security |
+| Tilok Jahan (@TilokJahan) | Backend (triage, AI, PII redaction, metrics) |
+| Ruth Bahre (@ruthbah) | Frontend |

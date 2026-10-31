@@ -1,7 +1,7 @@
 # Azure Kubernetes Service. Values that differ per deployment (registry, image tag, project,
 # Key Vault, identities, host name) live in cloud.env and are filled in by the deploy workflow
 # from Terraform outputs (see infra/README.md). Nothing secret is stored here.
-#   kubectl apply -k infra/k8s/overlays/aks
+#   kubectl kustomize infra/k8s/overlays/aks --load-restrictor=LoadRestrictionsNone | kubectl apply -f -
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: clinic-portal
@@ -9,6 +9,7 @@ resources:
   - ../../base
   - secret-provider.yaml
   - ingress.yaml
+  - db-init.yaml
 images:
   - name: appointment-service
     newName: REGISTRY/appointment-service
@@ -29,6 +30,10 @@ configMapGenerator:
   - name: gcp-credential-config
     files:
       - credential-config.json
+  - name: db-schema
+    files:
+      - 01-schema.sql=../../../../services/appointment-service/db/schema.sql
+      - 02-seed.sql=../../../../services/appointment-service/db/seed.sql
 patches:
   - path: patches/workload-identity.yaml
   - path: patches/appointment-cloud-sql.yaml
@@ -76,6 +81,11 @@ replacements:
           name: appointment-service
         fieldPaths:
           - spec.template.spec.initContainers.[name=cloud-sql-proxy].args.2
+      - select:
+          kind: Job
+          name: db-init
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=cloud-sql-proxy].args.2
   - source:
       kind: ConfigMap
       name: clinic-config
@@ -102,5 +112,9 @@ replacements:
     targets:
       - select:
           kind: Deployment
+        fieldPaths:
+          - spec.template.spec.volumes.[name=gcp-credentials].projected.sources.0.serviceAccountToken.audience
+      - select:
+          kind: Job
         fieldPaths:
           - spec.template.spec.volumes.[name=gcp-credentials].projected.sources.0.serviceAccountToken.audience

@@ -7,8 +7,9 @@ Two modes, chosen by AUTH_MODE:
   disabled in any other mode.
 - "identity-platform" (cloud): the frontend signs in with Google Identity Platform and sends
   the ID token. We verify it against Google's public keys (RS256, issuer and audience =
-  GCP_PROJECT_ID), then look the user up by email. A first-time user becomes a patient unless
-  an admin has set a "role" custom claim.
+  GCP_PROJECT_ID), then look the user up by email. Emails listed in ADMIN_EMAILS or
+  CLINICIAN_EMAILS (comma separated, set by operators) get that role; anyone else signing up
+  becomes a patient, unless an admin set a "role" custom claim before their first sign-in.
 
 Either way the endpoints only see a CurrentUser with our own users.id and role.
 """
@@ -82,19 +83,34 @@ def _verify_identity_platform(token: str) -> dict:
     )
 
 
+def _listed(variable: str) -> set[str]:
+    return {e.strip().lower() for e in os.environ.get(variable, "").split(",") if e.strip()}
+
+
 def _user_from_identity_platform(conn: psycopg.Connection, claims: dict) -> CurrentUser:
-    email = claims.get("email")
+    email = (claims.get("email") or "").lower()
     if not email or not claims.get("email_verified", False):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "A verified email is required")
-    role = claims.get("role") if claims.get("role") in ROLES else "patient"
-    # Create on first sign-in; never downgrade or upgrade an existing user's role from here.
+    # Operator-controlled lists win and also apply to existing users (that's how staff are added).
+    configured = (
+        "admin"
+        if email in _listed("ADMIN_EMAILS")
+        else "clinician"
+        if email in _listed("CLINICIAN_EMAILS")
+        else None
+    )
+    first_time_role = configured or (
+        claims.get("role") if claims.get("role") in ROLES else "patient"
+    )
+    # Otherwise create on first sign-in and never change an existing user's role from a token.
     row = conn.execute(
         """
-        INSERT INTO users (email, role) VALUES (%s, %s)
-        ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+        INSERT INTO users (email, role) VALUES (%(email)s, %(role)s)
+        ON CONFLICT (email) DO UPDATE
+            SET role = coalesce(%(configured)s, users.role)
         RETURNING id, email, role
         """,
-        (email.lower(), role),
+        {"email": email, "role": first_time_role, "configured": configured},
     ).fetchone()
     return CurrentUser(**row)
 
