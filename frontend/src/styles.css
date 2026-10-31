@@ -422,3 +422,38 @@ h2 { color: #183a55; }
   .patient-cell span { font-size: 9px; }
   .reason-cell > span, .wait-cell { font-size: 11px; }
 }
+
+/* --- Added for the API-connected screens --- */
+.urgency-pill.pending { color: #7d8a92; background: #f0f3f5; }
+.ai-label { display: inline-flex; align-items: center; gap: 5px; color: #6a55b8; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
+.error-banner { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; padding: 11px 13px; color: #9a3f30; background: #fff0ed; border: 1px solid #f5d0c8; border-radius: 9px; font-size: 13px; line-height: 1.45; }
+.error-banner svg { flex-shrink: 0; margin-top: 1px; }
+.live-badge { display: inline-flex; align-items: center; gap: 6px; color: #528b69; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
+.live-badge i { width: 7px; height: 7px; background: currentColor; border-radius: 50%; }
+.live-badge.live i { animation: pulse 1.6s ease-in-out infinite; }
+.live-badge.connecting, .live-badge.reconnecting { color: #bd8a3f; }
+@keyframes pulse { 50% { opacity: .35; } }
+.spin { animation: spin 1s linear infinite; vertical-align: -3px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.booking-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.booking-filters .date-choice input, .booking-filters .date-choice select { flex: 1; min-width: 0; height: 100%; color: #33464f; background: none; border: 0; outline: none; font-size: 13px; }
+.slot-button { display: flex; flex-direction: column; justify-content: center; gap: 2px; height: 54px; }
+.slot-button small { color: #8d9a93; font-size: 10px; font-weight: 500; }
+.hero-actions.centered { justify-content: center; flex-wrap: wrap; }
+.triage-result { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+.triage-result h2 { margin: 0; color: #183a55; font: 700 19px Manrope; }
+.triage-result > p { margin: 0; color: #758891; font-size: 13px; }
+.triage-result .ai-summary, .triage-result .red-flag-box, .triage-result .error-banner { width: 100%; margin: 0; }
+.result-urgency { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.intake-form select { height: 44px; padding: 0 11px; border: 1px solid #dce7ee; border-radius: 8px; background: #fff; }
+.login-card select { height: 42px; padding: 0 11px; border: 1px solid #dce7ee; border-radius: 8px; background: #fff; font-size: 12px; }
+.triage-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.review-tag { color: #528b69; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }
+.review-tag.overridden { color: #6a55b8; }
+.review-choice:disabled { opacity: .6; cursor: wait; }
+.role-chip { padding: 5px 10px; color: #075f98; background: #e5f3fb; border-radius: 20px; font-size: 11px; font-weight: 700; }
+.switch-button { height: 34px; padding: 0 12px; font-size: 12px; }
+@media (max-width: 760px) {
+  .booking-filters { grid-template-columns: 1fr; }
+  .switch-button { display: none; }
+}
