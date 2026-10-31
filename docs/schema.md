@@ -1,6 +1,7 @@
 # Database Schema (v1)
 
-Source of truth: [`services/appointment-service/db/schema.sql`](../services/appointment-service/db/schema.sql).
+Source of truth: [`services/appointment-service/db/schema.sql`](../services/appointment-service/db/schema.sql)
+and the migration [`schemav2_lab_results.sql`](../services/appointment-service/db/schemav2_lab_results.sql) (lab reports).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid
@@ -10,6 +11,8 @@ erDiagram
     providers ||--o{ slots : offers
     slots ||--o{ appointments : "at most one not cancelled"
     appointments ||--o{ triage_results : has
+    appointments ||--o{ lab_reports : "has (uploaded by the patient)"
+    lab_reports ||--o{ lab_results : contains
 
     users {
         bigint id PK
@@ -51,6 +54,32 @@ erDiagram
         integer latency_ms
         integer tokens_used
         timestamptz created_at
+    }
+    lab_reports {
+        bigint id PK
+        bigint appointment_id FK
+        text blob_name UK "file in Blob Storage; original name not kept"
+        text status "processing | ready | needs_review | failed"
+        text lab_urgency "routine | soon | urgent"
+        text reason "e.g. Critical: potassium 6.8 mmol/L"
+        text clinician_summary
+        text patient_explanation "draft, then approved text"
+        timestamptz explanation_approved_at "NULL = patient sees nothing"
+        bigint explanation_approved_by FK
+        real extraction_confidence
+    }
+    lab_results {
+        bigint id PK
+        bigint report_id FK
+        text display_name
+        text canonical "e.g. potassium (for results over time)"
+        numeric value "canonical unit"
+        text unit
+        numeric ref_low
+        numeric ref_high
+        text flag "normal | low | high | critical_low | critical_high | unknown"
+        real confidence
+        boolean needs_verification
     }
 ```
 

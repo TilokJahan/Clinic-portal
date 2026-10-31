@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { ArrowRight, CalendarDays, HeartPulse, ShieldCheck } from 'lucide-react'
 import { api } from '../api'
+import { PatientLabCard } from '../LabPanels'
 import { formatDateTime } from '../format'
 import type { MyAppointment } from '../types'
 
@@ -24,5 +25,6 @@ export function PatientHome() {
       </div>
       <div className="panel patient-info"><div className="info-icon lavender"><ShieldCheck /></div><h3>A note about symptom intake</h3><p>Your answers help the care team prepare. They don’t replace a medical evaluation.</p><NavLink to="/intake">Start an intake <ArrowRight size={15} /></NavLink></div>
     </section>
+    {next && <PatientLabCard appointmentId={next.id} />}
   </>
 }

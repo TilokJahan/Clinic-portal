@@ -13,5 +13,12 @@ data:
   ENTRA_TENANT_SUBDOMAIN: ""
   ENTRA_CLIENT_ID: ""
   CORS_ALLOWED_ORIGINS: ""
+  # Lab reports: "local" folder or "azure-blob"; "text" PDFs or "azure-document-intelligence"
+  LAB_STORAGE: local
+  LAB_STORAGE_DIR: /tmp/lab-reports
+  LAB_STORAGE_ACCOUNT_URL: ""
+  LAB_STORAGE_CONTAINER: lab-reports
+  LAB_EXTRACTOR: text
+  DOCINTEL_ENDPOINT: ""
   CLINICIAN_EMAILS: ""
   ADMIN_EMAILS: ""

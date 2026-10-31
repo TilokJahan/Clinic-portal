@@ -1,10 +1,13 @@
 import logging
 import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 from app import metrics
 from app.ai_client import ClientReply
+from app.labs.extract import IMAGES, PDF, Extractor, get_extractor
+from app.labs.interpret import LabInterpretation, interpret
+from app.labs.summary import get_summarizer
 from app.models import TriageRequest, TriageResponse
 from app.redaction import redact
 from app.triage_client import TriageClient, get_client
@@ -17,6 +20,11 @@ app = FastAPI(title="Triage Service", version="0.1.0")
 metrics.install(app)
 
 client: TriageClient = get_client()
+lab_extractor: Extractor = get_extractor()
+lab_summarizer = get_summarizer()
+
+MAX_LAB_BYTES = 10 * 1024 * 1024
+LAB_TYPES = {PDF, *IMAGES}
 
 
 @app.get("/health")
@@ -54,3 +62,19 @@ def triage(request: TriageRequest) -> TriageResponse:
         tokens_used=reply.tokens_used,
         fallback=reply.fallback_reason is not None,
     )
+
+
+@app.post("/labs/interpret")
+async def interpret_lab_report(request: Request) -> LabInterpretation:
+    """Internal (called by the appointment service). Body: the report file; Content-Type: its type.
+
+    The report itself never leaves this service except to the OCR service, and only the extracted
+    rows go to the AI. Nothing is stored here.
+    """
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type not in LAB_TYPES:
+        raise HTTPException(415, "Send a PDF, PNG or JPEG")
+    body = await request.body()
+    if not body or len(body) > MAX_LAB_BYTES:
+        raise HTTPException(413, "The report must be between 1 byte and 10 MB")
+    return interpret(body, content_type, lab_extractor, lab_summarizer)

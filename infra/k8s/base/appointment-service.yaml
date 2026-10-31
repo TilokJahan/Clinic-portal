@@ -70,6 +70,14 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # Uploads are spooled to /tmp (and stored there when LAB_STORAGE=local)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 500Mi
 ---
 apiVersion: v1
 kind: Service

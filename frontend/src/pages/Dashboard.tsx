@@ -14,7 +14,7 @@ export function Dashboard() {
   const { queue, status } = useQueue()
   const items = queue ?? []
   const triaged = items.filter((e) => e.triage)
-  const count = (u: string) => items.filter((e) => e.triage?.urgency === u).length
+  const count = (u: string) => items.filter((e) => e.urgency === u).length
   const counts = { urgent: count('urgent'), soon: count('soon'), routine: count('routine') }
   const avgWait = triaged.length ? Math.round(triaged.reduce((sum, e) => sum + waitMinutes(e), 0) / triaged.length) : 0
   const reviewed = triaged.filter((e) => e.triage!.reviewed_at).length

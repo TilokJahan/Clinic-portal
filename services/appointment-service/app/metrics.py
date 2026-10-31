@@ -32,6 +32,18 @@ TRIAGE_FALLBACKS = Counter(
 )
 REVIEWS = Counter("triage_reviews_total", "Clinician decisions", ["outcome"])  # accepted/overridden
 STREAM_CLIENTS = Gauge("queue_stream_clients", "Open GET /queue/stream connections")
+LAB_UPLOADS = Counter("lab_uploads_total", "Lab reports uploaded by patients", ["content_type"])
+LAB_PROCESSED = Counter(
+    "lab_reports_processed_total", "Lab reports interpreted, by outcome", ["status"]
+)
+LAB_PROCESSING_SECONDS = Histogram(
+    "lab_processing_duration_seconds",
+    "Upload to results stored (OCR + rules + AI, via the triage service)",
+    buckets=(1, 2, 4, 8, 15, 30, 60, 120),
+)
+LAB_APPROVALS = Counter(
+    "lab_explanations_approved_total", "Patient explanations approved by a clinician"
+)
 
 # Create every label value at 0 up front. Otherwise a series only appears on its first event and
 # Prometheus' increase()/rate() can't count that first event.
@@ -41,6 +53,8 @@ for _outcome in ("accepted", "overridden"):
     REVIEWS.labels(_outcome)
 for _reason in ("already_booked", "started"):
     BOOKING_CONFLICTS.labels(_reason)
+for _status in ("ready", "needs_review", "failed"):
+    LAB_PROCESSED.labels(_status)
 
 
 def install(app: FastAPI) -> None:

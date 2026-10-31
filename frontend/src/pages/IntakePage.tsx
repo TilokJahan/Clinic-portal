@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
 import { Activity, ArrowRight, Loader2, ShieldCheck } from 'lucide-react'
 import { api } from '../api'
+import { PatientLabCard } from '../LabPanels'
 import { AiLabel, ErrorBanner, UrgencyPill } from '../components'
 import { formatDateTime } from '../format'
 import type { MyAppointment, TriageRecord } from '../types'
@@ -52,7 +53,8 @@ export function IntakePage() {
       {result.red_flags.length > 0 && <div className="red-flag-box"><b><Activity size={15} /> Warning signs noted</b>{result.red_flags.map((f) => <span key={f}>• {f}</span>)}</div>}
       {result.urgency === 'urgent' && <ErrorBanner>If you think this may be an emergency, call your local emergency number now. Don’t wait for your appointment.</ErrorBanner>}
       <NavLink to="/" className="button button-primary">Back to home <ArrowRight size={16} /></NavLink>
-    </div></>
+    </div>
+    <PatientLabCard appointmentId={result.appointment_id} /></>
 
   if (bookings === null) return <>{header}<div className="panel form-panel empty-state"><Loader2 className="spin" size={18} /> Loading your appointments…</div></>
 

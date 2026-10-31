@@ -1,4 +1,4 @@
-# API Contract (v2, edit via pull request)
+# API Contract (v3, edit via pull request)
 
 Every change to this file goes through a pull request that all three of us review (#10).
 
@@ -14,7 +14,12 @@ Every change to this file goes through a pull request that all three of us revie
 | GET | `/queue` | appointment | clinician | Waiting patients, most urgent first | done |
 | GET | `/queue/stream` | appointment | clinician | Server-Sent Events for live updates | done |
 | PATCH | `/triage/{id}` | appointment | clinician | Accept or override the AI result | done |
+| POST | `/appointments/{id}/lab-reports` | appointment | patient | Upload a lab report (PDF/PNG/JPEG) | done |
+| GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results | done |
+| PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
+| GET | `/lab-reports/{id}/file` | appointment | clinician | The original file | done |
 | POST | `/triage` | triage | internal | Redact PII, call AI, return structured result | done |
+| POST | `/labs/interpret` | triage | internal | OCR + unit conversion + rule flags + AI summary | done |
 
 ## Conventions
 
@@ -200,6 +205,64 @@ records which clinician decided (`reviewed_by`).
 | 200 | Saved |
 | 404 | Unknown triage id (`{"detail": "Triage result not found"}`) |
 | 422 | `final_urgency` isn't `routine`, `soon` or `urgent` |
+
+### Lab reports
+
+See [labs.md](labs.md) for the pipeline and rules.
+
+**`POST /appointments/{id}/lab-reports`** (patient, own appointment): `multipart/form-data` with a
+`file` field: PDF, PNG or JPEG, up to 10 MB. Returns **202** with the `LabReport` in status
+`processing`; it's read in the background and the queue updates live when it's done.
+
+| Status | When |
+|---|---|
+| 202 | Stored, being read |
+| 404 | Unknown appointment, or someone else's |
+| 409 | Appointment is cancelled |
+| 413 | Over 10 MB |
+| 415 | Not a PDF, PNG or JPEG |
+| 422 | Empty file |
+
+**`LabReport`**
+
+```json
+{
+  "id": 4, "appointment_id": 7, "content_type": "application/pdf",
+  "status": "ready",
+  "uploaded_at": "2030-01-06T15:10:00Z", "processed_at": "2030-01-06T15:10:06Z",
+  "lab_urgency": "urgent",
+  "reason": "Critical: potassium 6.8 mmol/L",
+  "clinician_summary": "Potassium critically high at 6.8 mmol/L ...",
+  "patient_explanation": "Your potassium was higher than the usual range ...",
+  "explanation_approved": false, "explanation_approved_at": null,
+  "extraction_confidence": 0.97,
+  "results": [
+    {"display_name": "Potassium", "test_name": "Potassium", "canonical": "potassium",
+     "value": 6.8, "unit": "mmol/L", "ref_low": 3.5, "ref_high": 5.1,
+     "flag": "critical_high", "confidence": 0.98,
+     "needs_verification": false, "verification_reason": null}
+  ]
+}
+```
+
+- `status`: `processing`, `ready`, `needs_review` (a value needs checking, or nothing could be
+  read) or `failed`.
+- `flag`: `normal`, `low`, `high`, `critical_low`, `critical_high` or `unknown`, from fixed rules.
+- Values are in the canonical unit when the test is recognized (e.g. glucose in mg/dL).
+
+**`GET /appointments/{id}/lab-reports`**: newest first. Clinicians get everything. Patients get
+only `id`, `status`, dates and `explanation_approved` until a clinician approves; after that also
+`patient_explanation` and `results` (never `reason` or `clinician_summary`).
+
+**`PATCH /lab-reports/{id}`** (clinician): body `{"patient_explanation": "..."}` (1–3000
+characters). Saves the text and approves it for the patient. 404 if the report is unknown or not
+read yet (`processing` / `failed`).
+
+**`GET /lab-reports/{id}/file`** (clinician): the original file, `Cache-Control: no-store`.
+
+**Queue entries** also carry `lab` (the latest report: `report_id`, `status`, `urgency`,
+`reason`, `explanation_approved`) and `urgency`: the higher of the symptom urgency and the lab
+urgency, unless a clinician decided after the lab came in.
 
 ### `POST /triage` (triage service, internal)
 

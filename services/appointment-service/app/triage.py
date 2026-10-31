@@ -37,6 +37,17 @@ class TriageServiceClient:
             assessment = FALLBACK
         return assessment, round((time.perf_counter() - started) * 1000)
 
+    def interpret_lab(self, content: bytes, content_type: str) -> dict:
+        """POST /labs/interpret (OCR + rules + AI can take a while). Raises if it fails."""
+        response = self._http.post(
+            "/labs/interpret",
+            content=content,
+            headers={"Content-Type": content_type},
+            timeout=180,
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 _client: TriageServiceClient | None = None
 

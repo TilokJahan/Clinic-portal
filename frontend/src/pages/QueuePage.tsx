@@ -5,6 +5,7 @@ import { AiLabel, ErrorBanner, UrgencyPill } from '../components'
 import { formatDateTime, formatTime, formatWait, initials, waitMinutes } from '../format'
 import type { QueueEntry, StreamStatus, Urgency } from '../types'
 import { useQueue } from '../useQueue'
+import { ClinicianLabSection, LabReasonChip } from '../LabPanels'
 
 const FILTERS = ['all', 'urgent', 'soon', 'routine'] as const
 
@@ -17,9 +18,9 @@ export function QueueRow({ entry, compact = false, selected = false, onSelect }:
   const t = entry.triage
   const cells = <>
     <div className="patient-cell"><div className={`patient-avatar avatar-${entry.appointment_id % 4}`}>{initials(entry.patient_label)}</div><div><b>{entry.patient_label}</b><span>{formatTime(entry.starts_at)} · {entry.provider_name}</span></div></div>
-    <div className="reason-cell"><span>{t ? t.summary : 'Waiting for the patient’s intake'}</span>{t && t.red_flags.length > 0 && <small>{t.red_flags.length} red flag{t.red_flags.length > 1 ? 's' : ''}</small>}</div>
+    <div className="reason-cell"><span>{t ? t.summary : entry.lab ? 'Lab report received' : 'Waiting for the patient’s intake'}</span>{t && t.red_flags.length > 0 && <small>{t.red_flags.length} red flag{t.red_flags.length > 1 ? 's' : ''}</small>}<LabReasonChip reason={entry.lab?.reason ?? null} urgency={entry.lab?.urgency ?? null} /></div>
     <div className="wait-cell">{formatWait(waitMinutes(entry))}</div>
-    <div className="triage-cell"><UrgencyPill urgency={t?.urgency ?? null} />{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
+    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
   </>
   if (!onSelect) return <div className="queue-row">{cells}</div>
   return <button className={`queue-row queue-row-button ${selected ? 'selected' : ''}`} onClick={onSelect}>{cells}</button>
@@ -38,8 +39,8 @@ export function QueuePage() {
   const selected = items.find((e) => e.appointment_id === selectedId) ?? null
   const q = query.toLowerCase()
   const visible = items.filter((e) =>
-    (filter === 'all' || e.triage?.urgency === filter) &&
-    `${e.patient_label} ${e.provider_name} ${e.triage?.summary ?? ''} ${e.triage?.red_flags.join(' ') ?? ''}`.toLowerCase().includes(q))
+    (filter === 'all' || e.urgency === filter) &&
+    `${e.patient_label} ${e.provider_name} ${e.triage?.summary ?? ''} ${e.triage?.red_flags.join(' ') ?? ''} ${e.lab?.reason ?? ''}`.toLowerCase().includes(q))
 
   async function review(urgency: Urgency) {
     if (!selected?.triage) return
@@ -59,7 +60,7 @@ export function QueuePage() {
     <div className="queue-toolbar">
       <div className="search-box"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search patients, providers or symptoms" aria-label="Search queue" /></div>
       <div className="filter-tabs">{FILTERS.map((f) =>
-        <button className={filter === f ? 'active' : ''} key={f} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : f[0].toUpperCase() + f.slice(1)}<span>{f === 'all' ? items.length : items.filter((e) => e.triage?.urgency === f).length}</span></button>)}
+        <button className={filter === f ? 'active' : ''} key={f} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : f[0].toUpperCase() + f.slice(1)}<span>{f === 'all' ? items.length : items.filter((e) => e.urgency === f).length}</span></button>)}
       </div>
     </div>
     <div className="panel full-queue">
@@ -74,7 +75,7 @@ export function QueuePage() {
       <h2>{selected.patient_label}</h2>
       <p className="drawer-subtitle">{selected.provider_name} · {formatDateTime(selected.starts_at)} · waiting {formatWait(waitMinutes(selected))}</p>
       {!selected.triage
-        ? <div className="drawer-section"><p>This patient hasn’t sent their symptoms yet. Their priority appears here once they do.</p></div>
+        ? <div className="drawer-section"><p>This patient hasn’t sent their symptoms yet.{selected.lab ? ' Their lab report is below.' : ' Their priority appears here once they do.'}</p></div>
         : <>
           <div className="ai-summary"><div className="ai-title"><AiLabel /></div><p>{selected.triage.summary}</p>
             {selected.triage.suggested_specialty && <span>Suggested specialty · <b>{selected.triage.suggested_specialty}</b></span>}
@@ -93,7 +94,8 @@ export function QueuePage() {
             {error && <ErrorBanner>{error}</ErrorBanner>}
           </div>
         </>}
-      <div className="drawer-safety"><ShieldCheck size={16} /> AI suggestions support clinical judgment and are not a diagnosis.</div>
+      <ClinicianLabSection appointmentId={selected.appointment_id} refreshKey={JSON.stringify(selected.lab)} />
+      <div className="drawer-safety"><ShieldCheck size={16} /> AI suggestions support clinical judgment and are not a diagnosis. Critical lab values come from fixed rules, not the AI.</div>
     </aside></div>}
   </>
 }

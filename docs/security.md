@@ -13,6 +13,9 @@ The AI is decision support; a clinician makes every decision.
 | Symptom text is **never logged**, before or after redaction; logs and metrics carry only metadata (urgency, entity types, timings) | both services; tests check logs and `/metrics` |
 | The clinician queue shows "Patient 0007", not names or emails (minimum necessary) | `GET /queue` |
 | The AI result is always labelled "AI suggestion · clinician decides"; every decision records who made it (`reviewed_by`) and when (`reviewed_at`) | frontend, `PATCH /triage/{id}` |
+| Lab reports: critical values come from **fixed rules**, not the AI; the AI sees only extracted rows (never the report's name/DOB/record number) and can raise but never lower the lab urgency | `triage-service/app/labs/` |
+| Lab results and explanations reach a patient **only after a clinician approves**; patients never see "critical" wording | `appointment-service/app/labs.py`, frontend |
+| Uploaded reports are kept in a private Blob container (no public access, no account keys) under a generated name; the original file name isn't stored | `azure.tf`, `app/storage.py` |
 | If the AI fails or answers badly, the intake gets "soon, review manually", never a silent "routine" | `parsing.py`, `ai_client.py`, `app/triage.py` |
 
 ## Access control

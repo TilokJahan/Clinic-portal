@@ -89,6 +89,19 @@ class QueueEntry(BaseModel):
     booked_at: datetime
     # None until the patient submits an intake
     triage: TriageRecord | None
+    # Latest lab report, if any
+    lab: "QueueLab | None" = None
+    # What the queue sorts by: the higher of symptom and lab urgency, unless a clinician has
+    # decided after the latest lab result came in (then their decision)
+    urgency: Urgency | None = None
+
+
+class QueueLab(BaseModel):
+    report_id: int
+    status: str
+    urgency: Urgency | None
+    reason: str | None
+    explanation_approved: bool
 
 
 class DevLogin(BaseModel):

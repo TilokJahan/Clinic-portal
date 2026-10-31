@@ -126,6 +126,29 @@ jobs:
           # The live stream sends the current queue straight away (token in the URL for SSE)
           curl -sN --max-time 3 "$api/queue/stream?access_token=$CLINICIAN_TOKEN" | head -c 300 \
             | tee /dev/stderr | grep -q '^event: queue'
+          echo "APPT=$appt" >> "$GITHUB_ENV"
+      - name: Lab report is read, flagged and gated until a clinician approves
+        run: |
+          api=http://localhost:8001
+          patient=(-H "Authorization: Bearer $PATIENT_TOKEN")
+          clinician=(-H "Authorization: Bearer $CLINICIAN_TOKEN")
+          report=$(curl -sf "${patient[@]}" -X POST "$api/appointments/$APPT/lab-reports" \
+            -F "file=@docs/samples/lab-report-critical-potassium.pdf;type=application/pdf" | jq .id)
+          for i in $(seq 1 30); do
+            status=$(curl -sf "${clinician[@]}" "$api/appointments/$APPT/lab-reports" | jq -r '.[0].status')
+            [ "$status" != processing ] && break; sleep 2
+          done
+          curl -sf "${clinician[@]}" "$api/appointments/$APPT/lab-reports" | jq '.[0] | {status, reason, results: [.results[] | {display_name, value, unit, flag}]}'
+          test "$status" = ready
+          # Rules flag the critical value and the queue shows why the patient is urgent
+          queue=$(curl -sf "${clinician[@]}" "$api/queue")
+          test "$(echo "$queue" | jq -r ".[] | select(.appointment_id == $APPT) | .lab.reason")" = "Critical: potassium 6.8 mmol/L"
+          test "$(echo "$queue" | jq -r ".[] | select(.appointment_id == $APPT) | .urgency")" = urgent
+          # The patient sees nothing until a clinician approves, then the results
+          test "$(curl -sf "${patient[@]}" "$api/appointments/$APPT/lab-reports" | jq '.[0].results | length')" = 0
+          curl -sf "${clinician[@]}" -H 'content-type: application/json' -X PATCH "$api/lab-reports/$report" \
+            -d '{"patient_explanation": "Your potassium was high. We will call you today."}' > /dev/null
+          test "$(curl -sf "${patient[@]}" "$api/appointments/$APPT/lab-reports" | jq '.[0].results | length')" = 5
       - name: Frontend is served and proxies the API
         run: |
           curl -sf http://localhost:8080/ | grep -q '<div id="root">'

@@ -11,5 +11,7 @@ the pull request or in the team channel.
 | Symptom intake with triage result | [3-intake-result.png](3-intake-result.png) | "AI suggestion · clinician decides" label, suggested priority, warning signs, emergency notice when urgent |
 | Clinician queue | [4-clinician-queue.png](4-clinician-queue.png) | Urgency colours (red urgent, amber soon, green routine), wait time, live badge, accept/override buttons with the AI's choice marked |
 | Clinician overview | [5-clinician-overview.png](5-clinician-overview.png) | Live counts, urgency mix, suggestions still to review |
+| Clinician lab review | [6-clinician-lab-review.png](6-clinician-lab-review.png) | Queue reason chip, results with rule flags, AI summary, original report, explanation to approve |
+| Patient lab results | [7-patient-lab-results.png](7-patient-lab-results.png) | Upload, then the approved explanation and results in plain words |
 
 To retake them, run the app and capture at 1440×900.

@@ -39,6 +39,8 @@ metadata:
     # Server-Sent Events (/api/queue/stream): keep the connection open and unbuffered
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    # Lab report uploads (up to 10 MB)
+    nginx.ingress.kubernetes.io/proxy-body-size: "11m"
 spec:
   ingressClassName: clinic-nginx
   tls:
