@@ -1,5 +1,6 @@
-# Azure workload identity for both service accounts (Key Vault access). The client ID is
-# filled in from cloud.env by the replacements in kustomization.yaml.
+# Azure workload identity: pods of both services get Entra tokens for their Kubernetes service
+# account (Key Vault for the database URL, Azure OpenAI for triage). The client ID is filled in
+# from cloud.env by the replacements in kustomization.yaml.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -13,3 +14,39 @@ metadata:
   name: triage-service
   annotations:
     azure.workload.identity/client-id: from-cloud-env
+---
+# The appointment service mounts the Key Vault secret (that's what syncs it into clinic-secrets)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appointment-service
+spec:
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      containers:
+        - name: app
+          volumeMounts:
+            - name: key-vault
+              mountPath: /mnt/secrets
+              readOnly: true
+      volumes:
+        - name: key-vault
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: clinic-key-vault
+---
+# The triage service calls Azure OpenAI with its workload identity (no API key)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage-service
+spec:
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"

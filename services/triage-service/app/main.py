@@ -4,7 +4,7 @@ import time
 from fastapi import FastAPI
 
 from app import metrics
-from app.gemini_client import ClientReply
+from app.ai_client import ClientReply
 from app.models import TriageRequest, TriageResponse
 from app.redaction import redact
 from app.triage_client import TriageClient, get_client

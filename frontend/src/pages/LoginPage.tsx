@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, HeartPulse, Loader2, ShieldCheck } from 'lucide-react'
-import { authMode, DEMO_ACCOUNTS, demoLogin, passwordLogin, signUp, type Session } from '../auth'
+import { authMode, DEMO_ACCOUNTS, demoLogin, entraLogin, type Session } from '../auth'
 import { ErrorBanner } from '../components'
 import type { Role } from '../types'
 
@@ -9,7 +9,6 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
   const navigate = useNavigate()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
 
   async function finish(result: Awaited<ReturnType<typeof demoLogin>>) {
     setBusy(false)
@@ -22,20 +21,12 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
     <div className="login-brand"><div className="brand-mark"><HeartPulse size={20} /></div><span>Cloud Clinic</span></div>
     <div className="eyebrow">WELCOME TO CLOUD CLINIC</div>
     <h1>Good to see you.</h1>
-    {authMode === 'identity-platform'
-      ? <PasswordForm busy={busy} onSubmit={async (email, password, creating) => {
-          setBusy(true); setError(''); setNotice('')
-          if (!creating) return finish(await passwordLogin(email, password))
-          const result = await signUp(email, password)
-          setBusy(false)
-          if (result.ok) setNotice('Account created. Check your email for a verification link, then sign in.')
-          else setError(result.detail)
-        }} />
+    {authMode === 'entra'
+      ? <EntraButtons busy={busy} onClick={async (creating) => { setBusy(true); setError(''); finish(await entraLogin(creating)) }} />
       : <DemoForm busy={busy} onSubmit={async (email) => { setBusy(true); setError(''); finish(await demoLogin(email)) }} />}
-    {notice && <p className="login-notice" role="status">{notice}</p>}
     {error && <ErrorBanner>{error}</ErrorBanner>}
-    <div className="login-foot"><ShieldCheck size={14} /> {authMode === 'identity-platform' ? 'Secured by Google Identity Platform' : 'Synthetic demo accounts only'}</div>
-    {authMode !== 'identity-platform' && <p className="login-demo">Demo sign-in for local development: no password, synthetic data only.</p>}
+    <div className="login-foot"><ShieldCheck size={14} /> {authMode === 'entra' ? 'Secured by Microsoft Entra ID' : 'Synthetic demo accounts only'}</div>
+    {authMode !== 'entra' && <p className="login-demo">Demo sign-in with synthetic accounts: no password, no real patient data.</p>}
   </div></div>
 }
 
@@ -59,15 +50,12 @@ function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string)
   </form>
 }
 
-function PasswordForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string, password: string, creating: boolean) => void }) {
-  const [creating, setCreating] = useState(false)
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  return <form onSubmit={(e) => { e.preventDefault(); onSubmit(email.trim(), password, creating) }}>
-    <p>{creating ? 'Create a patient account.' : 'Sign in to continue to your care space.'}</p>
-    <label>Email address<input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-    <label>Password<input type="password" autoComplete={creating ? 'new-password' : 'current-password'} required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-    <button className="button button-primary login-submit" type="submit" disabled={busy}>{busy ? <Loader2 className="spin" size={16} /> : null} {creating ? 'Create account' : 'Sign in'} <ArrowRight size={16} /></button>
-    <button type="button" className="text-button" onClick={() => setCreating(!creating)}>{creating ? 'I already have an account' : 'New patient? Create an account'}</button>
-  </form>
+function EntraButtons({ busy, onClick }: { busy: boolean; onClick: (creating: boolean) => void }) {
+  return <div>
+    <p>Sign in with your email address. New patients can create an account; we'll send a code to verify your email.</p>
+    <button className="button button-primary login-submit" type="button" disabled={busy} onClick={() => onClick(false)}>
+      {busy ? <Loader2 className="spin" size={16} /> : null} Sign in <ArrowRight size={16} />
+    </button>
+    <button type="button" className="text-button" disabled={busy} onClick={() => onClick(true)}>New patient? Create an account</button>
+  </div>
 }

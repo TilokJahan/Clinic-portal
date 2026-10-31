@@ -97,11 +97,11 @@ The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the sa
 | Mode | Where | How you get a token |
 |---|---|---|
 | `dev` | local, docker compose, CI | `POST /auth/dev-login` with a seed account's email. Signed with `AUTH_DEV_SECRET`, valid 8 hours. No password: demo data only |
-| `identity-platform` | cloud | Sign in with Google Identity Platform (email + password) in the frontend and send the **ID token**. The backend checks Google's signature, issuer and audience (`GCP_PROJECT_ID`) and needs a verified email |
+| `entra-external-id` | cloud | Sign in with Microsoft Entra External ID (hosted email + password sign-up/sign-in) and send the **ID token**. The backend checks the tenant's signature, issuer and audience (`ENTRA_CLIENT_ID`) and needs an email claim |
 
-- In `identity-platform` mode a first-time user is created as a `patient`. Clinicians and admins
-  are given the role in the `users` table (or with a `role` custom claim set by an admin before
-  their first sign-in). A token can never change an existing user's role.
+- In `entra-external-id` mode a first-time user is created as a `patient`. Emails listed in the
+  operator settings `CLINICIAN_EMAILS` / `ADMIN_EMAILS` get that role when they sign in. A token
+  can never change anyone's role.
 - `GET /queue/stream` also accepts the token as `?access_token=...`, because the browser's
   `EventSource` can't send headers. Only that endpoint should use it.
 
@@ -119,7 +119,7 @@ Body `{"email": "patient1@example.com"}`. Returns
 ### `GET /me`
 
 Returns `{"id": 1, "email": "patient1@example.com", "role": "patient"}`. In
-`identity-platform` mode this is also where a first-time user is created.
+`entra-external-id` mode this is also where a first-time user is created.
 
 ## Endpoints
 
@@ -217,7 +217,7 @@ client. Returns:
 }
 ```
 
-`tokens_used` is reported by the Gemini client (`null` for the fake client). `fallback` is
+`tokens_used` is reported by the Azure OpenAI client (`null` for the fake client). `fallback` is
 `true` when the model failed or answered invalidly and the safe default (`soon`, "review
 manually") was returned instead. The appointment service stores `tokens_used` with the result.
 

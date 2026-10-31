@@ -1,42 +1,42 @@
 # Cloud Accounts and Budgets
 
-Who owns the shared cloud resources, when the credits run out, and how we avoid overspending.
+Who owns the shared Azure resources, when the credits run out, and how we avoid overspending.
+Everything runs on Azure (we dropped Google Cloud: the account couldn't be used).
 
 > **Never put passwords, keys, tokens, card numbers or subscription secrets in this file.**
 > IDs below are fine to share inside the team. Secrets go in Azure Key Vault.
 
-Status: **TODO**. Fill in the blanks (`____`) as each step is done, then tick the checklist.
+Status: **deployed 2026-10-31**. Remaining blanks: credit amount and expiry, teammate invites.
 
 ## Decision
 
-| | Azure | Google Cloud |
-|---|---|---|
-| Hosted on whose account | ____ | ____ |
-| Offer / credit type (e.g. Azure for Students, GCP education credits) | ____ | ____ |
-| Subscription name / Billing account name | ____ | ____ |
-| Subscription ID / Project ID (not secret) | ____ | ____ |
-| Starting credit | ____ | ____ |
-| Credit expiry date | ____ | ____ |
-| Region we use | ____ | `us-central1` (see `.env.example`) |
+| | Azure |
+|---|---|
+| Hosted on whose account | Tabarek (tjs3201@wmich.edu) |
+| Offer / credit type | Azure for Students |
+| Subscription name | Azure for Students |
+| Subscription ID (not secret) | e8fb3009-935e-458c-8a9f-5ddef82f3155 |
+| Starting credit | ____ |
+| Credit expiry date | ____ |
+| Region we use | `canadacentral` (the subscription only allows canadacentral, francecentral, belgiumcentral, denmarkeast, mexicocentral) |
 
 Why this account: ____ (for example the most credit left, or the latest expiry date)
 
 ## Access
 
-| Teammate | GitHub | Azure role | Azure invite works? | GCP role | GCP invite works? |
-|---|---|---|---|---|---|
-| ____ (owner) | ____ | Owner | n/a | Owner | n/a |
-| ____ | ____ | Contributor | ☐ | ____ | ☐ |
-| ____ | ____ | Contributor | ☐ | ____ | ☐ |
+| Teammate | GitHub | Azure role | Azure invite works? |
+|---|---|---|---|
+| ____ (owner) | ____ | Owner | n/a |
+| ____ | ____ | Contributor | ☐ |
+| ____ | ____ | Contributor | ☐ |
 
 ## Budget alerts
 
 | Cloud | Budget amount | Alert thresholds | Who gets the email | Set up on | Test alert received? |
 |---|---|---|---|---|---|
 | Azure | ____ | 25%, 50%, 80%, 100% | all three | ____ | ☐ |
-| Google Cloud | ____ | 25%, 50%, 80%, 100% | all three | ____ | ☐ |
 
-Budget alerts only **send emails**. They do **not** stop spending. See "Cost safety habits" below.
+Budget alerts only **send emails**. They do **not** stop spending. Terraform (`infra/terraform`) creates the budget for you. See "Cost safety habits" below.
 
 ## Restrictions we hit
 
@@ -47,11 +47,10 @@ Write down anything that blocked us and what we did instead, for example:
 
 ## Checklist (issue #4)
 
-- [ ] Decided which Azure subscription and which GCP billing account host shared resources
-- [ ] Other two teammates added as Contributor (Azure) and as IAM members (GCP)
-- [ ] Each teammate confirmed they can see the resource group and the GCP project
+- [ ] Decided which Azure subscription hosts the shared resources
+- [ ] Other two teammates added as Contributor
+- [ ] Each teammate confirmed they can see the resource group
 - [ ] Budget alerts active on Azure
-- [ ] Budget alerts active on Google Cloud
 - [ ] Expiry dates, owners and restrictions filled in above
 
 ---
@@ -96,44 +95,10 @@ page name in **bold**.
 5. If Budgets isn't available for your offer type, note it under "Restrictions". As a fallback,
    check the credit balance in the Education Hub weekly.
 
-### Google Cloud
-
-**1. Find the billing account and credits**
-1. Sign in to <https://console.cloud.google.com>, then **Billing**, and pick the billing account
-   that holds the credits.
-2. **Credits** (in the Billing menu) shows the remaining amount and expiry date. Copy them into
-   the table.
-
-**2. Create the project and link billing**
-1. Project picker, then **New project**, for example `clinic-portal`. Copy the **Project ID**.
-2. **Billing**, then **Account management**, and confirm the project is linked to the billing
-   account with the credits.
-
-**3. Add teammates**
-1. In the project, go to **IAM & Admin**, then **IAM**, then **Grant access**.
-2. Principal: the teammate's Google account email.
-3. Role: **Editor** is the simplest for a class project. A tighter alternative is specific roles
-   (Cloud SQL Admin, Vertex AI User, Storage Admin) added as we need them.
-4. If they should see costs, also grant **Billing Account Viewer** on the billing account
-   (**Billing**, then **Account management**, then **Add principal**).
-5. Ask them to open the project and confirm. Note "GCP invite works?".
-
-**4. Set budget alerts**
-1. **Billing**, then **Budgets & alerts**, then **Create budget**.
-2. Scope: the `clinic-portal` project (or the whole billing account).
-3. Amount: a specified amount equal to the credit you want to guard. Decide whether the
-   budget should count **credits**: if credits are subtracted from cost, alerts won't fire until
-   real money is spent. For tracking credit usage, **untick** the credits so alerts fire on gross
-   usage.
-4. Thresholds: 25%, 50%, 80%, 100% of actual spend.
-5. Notifications: billing admins and users get emails by default. To email the other teammates,
-   connect **Cloud Monitoring email notification channels** for each teammate's email in the
-   budget's "Manage notifications" section.
-
 ## Cost safety habits
 
 - Tag or label every resource with `project=clinic-portal`, so costs can be filtered.
-- Biggest risks for this project: an **AKS cluster** and a **Cloud SQL instance** left running.
+- Biggest risks for this project: an **AKS cluster** and a **PostgreSQL server** left running.
   Use the smallest tiers, and stop or delete them when not demoing.
 - Before the credit expiry date, delete everything with
   `terraform destroy` and check that nothing is left in the portals.

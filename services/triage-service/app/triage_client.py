@@ -1,7 +1,7 @@
 import os
 from typing import Protocol
 
-from app.gemini_client import ClientReply
+from app.ai_client import ClientReply
 from app.models import TriageResult, Urgency
 
 
@@ -9,7 +9,7 @@ class TriageClient(Protocol):
     """Anything that turns (already redacted) symptom text into a TriageResult.
 
     Build against this interface so the team can work without cloud access.
-    Later, add a GeminiTriageClient that calls Vertex AI and swap it in via TRIAGE_CLIENT.
+    FakeTriageClient is the default; AITriageClient (Azure OpenAI) is chosen with TRIAGE_CLIENT.
     """
 
     def triage(self, redacted_text: str) -> "TriageResult | ClientReply": ...
@@ -40,8 +40,8 @@ def get_client() -> TriageClient:
     name = os.getenv("TRIAGE_CLIENT", "fake").strip().lower()
     if name == "fake":
         return FakeTriageClient()
-    if name == "gemini":
-        from app.gemini_client import GeminiTriageClient
+    if name == "azure-openai":
+        from app.ai_client import AITriageClient
 
-        return GeminiTriageClient.from_env()
-    raise ValueError(f"Unknown TRIAGE_CLIENT {name!r}. Use 'fake' or 'gemini'.")
+        return AITriageClient.from_env()
+    raise ValueError(f"Unknown TRIAGE_CLIENT {name!r}. Use 'fake' or 'azure-openai'.")

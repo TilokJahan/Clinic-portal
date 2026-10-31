@@ -107,10 +107,10 @@ The fallback has limits:
 and how long it took. Symptom text is never logged, before or after redaction. Both rules are
 covered by tests in `tests/test_triage.py`.
 
-The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no network) or `gemini`
-(Vertex AI, below).
+The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no network) or
+`azure-openai` (below).
 
-## Gemini prompt (design, issue #8)
+## AI prompt (issue #8)
 
 - **System prompt:** `app/prompts.py` (`SYSTEM_PROMPT`). It sets the role ("decision support,
   not diagnosis"), defines `routine` / `soon` / `urgent` with examples, says to choose the more
@@ -121,27 +121,23 @@ The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no netwo
   to `soon` plus "review manually".
 - **Evaluation cases:** `tests/cases.json` has 15 synthetic descriptions with the expected urgency
   (6 urgent, 5 soon, 4 routine), including stroke, self-harm, a vague message, and one with
-  personal details to check that redaction runs first. When the Gemini client exists, run every
-  case and compare against `expected_urgency`. An `urgent` case scored lower is the failure
-  that matters most.
+  personal details to check that redaction runs first. An `urgent` case scored lower is the
+  failure that matters most.
 
-## Vertex AI project and region
+The prompt was first written for Gemini; it is provider-neutral and is used unchanged with
+Azure OpenAI.
 
-- **Region:** `us-central1` (`GCP_REGION` in `.env.example`). Gemini Flash is available there.
-- **Project:** the shared Google Cloud project recorded in `docs/cloud-accounts.md` (issue #4,
-  Backend A). Set it as `GCP_PROJECT_ID`. The service account needs the **Vertex AI User** role.
+## AI client (`app/ai_client.py`, Azure OpenAI)
 
-## Gemini client (`app/gemini_client.py`)
-
-- Calls Gemini on Vertex AI with the Google Gen AI SDK (`google-genai`): system prompt from
-  `app/prompts.py`, JSON output, temperature 0, at most 512 output tokens. Model from
-  `GEMINI_MODEL` (default `gemini-2.5-flash`), project and region from `GCP_PROJECT_ID` /
-  `GCP_REGION`.
-- **Credentials:** Application Default Credentials only. Locally:
-  `gcloud auth application-default login`. In the cloud: Workload Identity (see `infra/`).
-  The service account needs `roles/aiplatform.user`. No API keys anywhere.
+- Calls the `gpt-5-mini` deployment (`AZURE_OPENAI_DEPLOYMENT`) on the Azure OpenAI resource
+  (`AZURE_OPENAI_ENDPOINT`) with the `openai` SDK: system prompt from `app/prompts.py`, JSON
+  output (`response_format=json_object`). For reasoning models (gpt-5, o-series) it sets a 2,000-token
+  budget with `reasoning_effort=low`; for classic chat models, temperature 0 and 512 tokens.
+- **Credentials:** Microsoft Entra ID only (`DefaultAzureCredential`). On AKS that's workload
+  identity; on a laptop it's `az login`. The resource has key auth turned off, and the identity
+  needs the **Cognitive Services OpenAI User** role (Terraform grants it).
 - Every reply goes through `parse_llm_output()`. Invalid JSON, extra fields, or a model error
-  (quota, network, safety block) return the safe fallback with `fallback: true`, so an intake
+  (quota, network, content filter) return the safe fallback with `fallback: true`, so an intake
   never fails because of the AI.
 - Logs metadata only: the exception type, the fallback reason, the token count. Never the prompt,
   the reply or the exception message, because those can echo the patient's words.
@@ -152,9 +148,10 @@ The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no netwo
 
 ```bash
 cd services/triage-service
-gcloud auth application-default login
-GCP_PROJECT_ID=<project> python scripts/evaluate_gemini.py
+az login
+AZURE_OPENAI_ENDPOINT=$(terraform -chdir=../../infra/terraform output -raw openai_endpoint) \
+  python scripts/evaluate_ai.py
 ```
 
 It prints expected vs actual urgency per case and exits non-zero if any `urgent` case is scored
-lower. Run it after any prompt change.
+lower. Run it after any prompt or model change.

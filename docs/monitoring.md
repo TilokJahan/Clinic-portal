@@ -34,7 +34,7 @@ that honours them (for example Azure Managed Prometheus) picks them up.
 | `triage_requests_total{urgency,fallback}` | triage | Results by urgency and fallback reason |
 | `triage_duration_seconds` | triage | Redaction plus AI call |
 | `redacted_entities_total{entity}` | triage | Requests in which a kind of personal detail was removed |
-| `llm_tokens_total` | triage | Tokens used by Gemini (drives cost) |
+| `llm_tokens_total` | triage | Tokens used by Azure OpenAI (drives cost) |
 
 ## Privacy rules for metrics
 
@@ -47,8 +47,8 @@ that honours them (for example Azure Managed Prometheus) picks them up.
 
 | Signal | Why it matters |
 |---|---|
-| AI fallback rate going up | Gemini is failing (quota, outage, bad output): intakes still work but get "review manually" |
+| AI fallback rate going up | Azure OpenAI is failing (quota, outage, bad output): intakes still work but get "review manually" |
 | Override rate | How often clinicians disagree with the AI; a sudden change suggests a prompt or model problem |
 | Urgent intakes | Workload for clinicians right now |
 | p95 latency of `/intake` | Patients wait for this call; it includes the AI |
-| AI tokens per hour | Vertex AI cost |
+| AI tokens per hour | Azure OpenAI cost |

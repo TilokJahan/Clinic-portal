@@ -358,7 +358,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "AI tokens per hour",
-      "description": "Drives Vertex AI cost",
+      "description": "Drives Azure OpenAI cost",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

@@ -8,7 +8,6 @@ namespace: clinic-portal
 resources:
   - ../../base
   - postgres.yaml
-  - frontend.yaml
 images:
   - name: appointment-service
     newName: clinic/appointment-service

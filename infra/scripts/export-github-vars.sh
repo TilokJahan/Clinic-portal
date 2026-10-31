@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Copy Terraform outputs into GitHub Actions variables for .github/workflows/deploy.yml.
 # Run from the repo root after `terraform apply`, signed in with `gh auth login`.
-# Nothing secret is copied: IDs, host names, the public browser key and the (non-secret)
-# Workload Identity Federation config. The database password stays in Key Vault.
+# Nothing secret is copied: IDs and host names. The database password stays in Key Vault.
 set -euo pipefail
 cd "$(dirname "$0")/../terraform"
 
@@ -15,6 +14,5 @@ terraform output -json github_variables | jq -r 'to_entries[] | "\(.key)\t\(.val
   done
 
 gh variable set CLOUD_ENV --repo "$repo" --body "$(terraform output -raw cloud_env)"
-gh variable set GCP_CREDENTIAL_CONFIG --repo "$repo" --body "$(terraform output -raw gcp_credential_config)"
 
 echo "Done. Start a deploy with: gh workflow run deploy.yml --repo $repo"

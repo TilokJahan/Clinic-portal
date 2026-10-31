@@ -1,7 +1,7 @@
-"""Prompt for the Gemini triage client (design only, see issue #8).
+"""Prompt for the AI triage client (app/ai_client.py, Azure OpenAI).
 
-The Gemini client (Week 8) sends SYSTEM_PROMPT as the system instruction and build_user_prompt()
-as the user turn, asks for JSON output, then validates the reply with parsing.parse_llm_output().
+The client sends SYSTEM_PROMPT as the system message and build_user_prompt() as the user
+message, asks for JSON output, then validates the reply with parsing.parse_llm_output().
 The output schema is generated from TriageResult, so the prompt can't drift from the validator.
 """
 

@@ -35,3 +35,8 @@ crash.log
 .idea/
 .DS_Store
 Thumbs.db
+
+# Terraform plan files and logs can contain secret values
+tfplan
+*.tfplan
+infra/terraform/*.log

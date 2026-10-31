@@ -4,14 +4,18 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-# Cloud builds pass these (public web config, not secrets); local builds use dev sign-in
+# Cloud builds pass these (public values, not secrets); local builds use dev sign-in
 ARG VITE_AUTH_MODE=dev
-ARG VITE_FIREBASE_API_KEY=
-ARG VITE_FIREBASE_AUTH_DOMAIN=
-ENV VITE_API_MODE=http VITE_AUTH_MODE=$VITE_AUTH_MODE     VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_ENTRA_CLIENT_ID=
+ARG VITE_ENTRA_AUTHORITY=
+ENV VITE_API_MODE=http \
+    VITE_AUTH_MODE=$VITE_AUTH_MODE \
+    VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID \
+    VITE_ENTRA_AUTHORITY=$VITE_ENTRA_AUTHORITY
 RUN npm run build
 
-FROM nginx:1.27-alpine
+# Unprivileged nginx: runs as a non-root user and listens on 8080
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 8080

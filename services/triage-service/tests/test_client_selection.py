@@ -14,31 +14,25 @@ def test_fake_is_case_and_space_insensitive(monkeypatch, value):
     assert isinstance(get_client(), FakeTriageClient)
 
 
-def test_gemini_needs_a_project(monkeypatch):
-    monkeypatch.setenv("TRIAGE_CLIENT", "gemini")
-    monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
-    with pytest.raises(ValueError, match="GCP_PROJECT_ID"):
+def test_azure_openai_needs_an_endpoint(monkeypatch):
+    monkeypatch.setenv("TRIAGE_CLIENT", "azure-openai")
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    with pytest.raises(ValueError, match="AZURE_OPENAI_ENDPOINT"):
         get_client()
 
 
-def test_gemini_is_selected_with_a_project(monkeypatch):
-    from app import gemini_client
+def test_azure_openai_is_selected_with_an_endpoint(monkeypatch):
+    from app import ai_client
 
-    monkeypatch.setenv("TRIAGE_CLIENT", "gemini")
-    monkeypatch.setenv("GCP_PROJECT_ID", "demo-project")
-    monkeypatch.setenv("GEMINI_MODEL", "gemini-test")
+    monkeypatch.setenv("TRIAGE_CLIENT", "azure-openai")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://demo.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-test")
     seen = {}
 
-    def fake_vertex(project, location, model):
-        seen.update(project=project, location=location, model=model)
+    def fake_build(endpoint, deployment):
+        seen.update(endpoint=endpoint, deployment=deployment)
         return lambda system, user: None
 
-    monkeypatch.setattr(gemini_client, "vertex_generate", fake_vertex)
-    assert isinstance(get_client(), gemini_client.GeminiTriageClient)
-    assert seen == {"project": "demo-project", "location": "us-central1", "model": "gemini-test"}
-
-
-def test_unknown_value_is_rejected(monkeypatch):
-    monkeypatch.setenv("TRIAGE_CLIENT", "banana")
-    with pytest.raises(ValueError, match="banana"):
-        get_client()
+    monkeypatch.setattr(ai_client, "azure_openai_generate", fake_build)
+    assert isinstance(get_client(), ai_client.AITriageClient)
+    assert seen == {"endpoint": "https://demo.openai.azure.com/", "deployment": "gpt-test"}
