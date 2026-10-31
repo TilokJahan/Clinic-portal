@@ -4,9 +4,9 @@ Kustomize, one base and two overlays.
 
 | Folder | What it is |
 |---|---|
-| `base/` | Appointment and triage services: Deployments, Services, probes, config, HPA, PDB, NetworkPolicy |
-| `overlays/local/` | A laptop cluster (kind): adds Postgres (seeded from `db/schema.sql` + `db/seed.sql`) and the frontend; dev sign-in, fake AI client |
-| `overlays/aks/` | Azure Kubernetes Service (applied by `.github/workflows/deploy.yml`): images from ACR, secrets from Key Vault, Cloud SQL + Vertex AI through keyless Workload Identity Federation, HTTPS ingress |
+| `base/` | Frontend, appointment and triage services: Deployments, Services, probes, config, HPA, PDB, NetworkPolicy |
+| `overlays/local/` | A laptop cluster (kind): adds Postgres (seeded from `db/schema.sql` + `db/seed.sql`); dev sign-in, fake AI client |
+| `overlays/aks/` | Azure Kubernetes Service (applied by `.github/workflows/deploy.yml`): images from ACR, secrets from Key Vault, PostgreSQL Flexible Server, Azure OpenAI through workload identity, Entra External ID sign-in, HTTPS ingress |
 
 ## What the base gives every pod
 
@@ -31,7 +31,7 @@ docker compose build
 for s in appointment-service triage-service frontend; do docker tag clinic-portal-$s clinic/$s:local; done
 kind load docker-image clinic/appointment-service:local clinic/triage-service:local clinic/frontend:local --name clinic
 kubectl kustomize infra/k8s/overlays/local --load-restrictor=LoadRestrictionsNone | kubectl apply -f -
-kubectl -n clinic-portal port-forward svc/frontend 8080:80
+kubectl -n clinic-portal port-forward svc/frontend 8080:80   # Service port 80 -> nginx 8080
 ```
 
 Open http://localhost:8080. Clean up with `kind delete cluster --name clinic`.
@@ -42,21 +42,22 @@ kubeconform.
 ## How the AKS overlay connects to everything
 
 ```
-Browser (Static Web App) --HTTPS--> ingress (clinic-nginx, Let's Encrypt cert)
-    --> appointment-service --> Cloud SQL Auth Proxy (sidecar) --> Cloud SQL (Google)
-                            --> triage-service --> Vertex AI Gemini (Google)
+Browser --HTTPS--> ingress (clinic-nginx, Let's Encrypt) --> frontend (nginx)
+    /api --> appointment-service --> PostgreSQL Flexible Server (private subnet, TLS)
+                                 --> triage-service --> Azure OpenAI (Entra token, no key)
 Secrets: Azure Key Vault --(Secrets Store CSI, workload identity)--> clinic-secrets
-Google credentials: pod's Kubernetes token --(Workload Identity Federation)--> GCP service account
+Sign-in: Microsoft Entra External ID --(ID token)--> appointment-service verifies it
 ```
 
-- **No keys anywhere.** Azure access (Key Vault) uses AKS workload identity; Google access
-  (Cloud SQL proxy, Vertex AI) exchanges the pod's Kubernetes token for short-lived Google
-  credentials. `credential-config.json` only describes that exchange; it isn't secret.
-- **Database schema:** the `db-init` Job loads `db/schema.sql` and the synthetic seed into
-  Cloud SQL the first time (it skips when the tables exist).
-- **Per-deployment values** (registry, project, Key Vault name, identities, host name) are in
-  `overlays/aks/cloud.env` and `credential-config.json`. The deploy workflow overwrites both from
-  `terraform output` before applying, so the committed files keep placeholders.
+- **No keys anywhere.** Both services use AKS workload identity: the appointment service for Key
+  Vault, the triage service for Azure OpenAI.
+- **One origin.** The ingress sends everything to the frontend, whose nginx proxies `/api` to the
+  appointment service, so the browser never makes cross-origin calls. Buffering is off for the
+  Server-Sent Events stream; `/api/metrics` returns 404.
+- **Database schema:** the `db-init` Job loads `db/schema.sql` and the synthetic seed into the
+  PostgreSQL server the first time (it skips when the tables exist).
+- **Per-deployment values** (registry, Key Vault name, identities, OpenAI endpoint, sign-in
+  tenant, host name) are in `overlays/aks/cloud.env`. The deploy workflow overwrites it from
+  `terraform output` before applying, so the committed file keeps placeholders.
 - **HTTPS:** the AKS application routing add-on runs a dedicated nginx controller with an Azure
   DNS label (`<DNS_LABEL>.<region>.cloudapp.azure.com`); cert-manager gets the certificate.
-  The ingress turns off buffering for the Server-Sent Events stream.

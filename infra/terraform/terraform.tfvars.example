@@ -1,9 +1,14 @@
 # Copy to terraform.tfvars (git-ignored) and fill in. No secrets here: just IDs and emails.
 azure_subscription_id = "00000000-0000-0000-0000-000000000000"
-gcp_project_id        = "your-gcp-project"
-gcp_billing_account   = "XXXXXX-XXXXXX-XXXXXX"
-dns_label             = "clinic-portal-yourteam" # unique in the Azure region
-budget_amount_usd     = 50
-budget_alert_emails   = ["member1@example.com", "member2@example.com", "member3@example.com"]
-clinician_emails      = ["clinician.demo@example.com"]
-admin_emails          = []
+location              = "canadacentral" # must be a region your subscription allows
+dns_label             = "clinic-portal-yourteam" # unique in the region
+
+# From the Entra External ID tenant (infra/README.md, step 2)
+entra_tenant_id        = "00000000-0000-0000-0000-000000000000"
+entra_tenant_subdomain = "yourclinic" # as in yourclinic.ciamlogin.com
+entra_client_id        = "00000000-0000-0000-0000-000000000000"
+
+budget_amount_usd   = 50
+budget_alert_emails = ["member1@example.com", "member2@example.com", "member3@example.com"]
+clinician_emails    = ["clinician.demo@example.com"]
+admin_emails        = []

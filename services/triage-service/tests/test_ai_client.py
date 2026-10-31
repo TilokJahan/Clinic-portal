@@ -1,4 +1,4 @@
-"""GeminiTriageClient with the model call replaced by a fake, so no cloud access is needed."""
+"""AITriageClient with the model call replaced by a fake, so no cloud access is needed."""
 
 import json
 import logging
@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.gemini_client import ClientReply, GeminiTriageClient, ModelReply
+from app.ai_client import AITriageClient, ClientReply, ModelReply, chat_options
 from app.models import Urgency
 from app.parsing import FALLBACK_URGENCY
 
@@ -33,7 +33,7 @@ class FakeModel:
 
 def test_valid_json_becomes_a_result_with_token_count():
     model = FakeModel(json.dumps(VALID))
-    reply = GeminiTriageClient(model).triage("<PERSON> has chest pain")
+    reply = AITriageClient(model).triage("<PERSON> has chest pain")
     assert reply.result.urgency == Urgency.URGENT
     assert reply.tokens_used == 321
     assert reply.fallback_reason is None
@@ -43,7 +43,7 @@ def test_valid_json_becomes_a_result_with_token_count():
 
 
 def test_json_in_code_fences_is_accepted():
-    reply = GeminiTriageClient(FakeModel(f"```json\n{json.dumps(VALID)}\n```")).triage("x")
+    reply = AITriageClient(FakeModel(f"```json\n{json.dumps(VALID)}\n```")).triage("x")
     assert reply.fallback_reason is None
 
 
@@ -57,7 +57,7 @@ def test_json_in_code_fences_is_accepted():
     ids=["prose", "extra-field", "bad-urgency"],
 )
 def test_bad_model_output_falls_back_safely(text, reason):
-    reply = GeminiTriageClient(FakeModel(text)).triage("x")
+    reply = AITriageClient(FakeModel(text)).triage("x")
     assert reply.fallback_reason == reason
     assert reply.result.urgency == FALLBACK_URGENCY
     assert "manually" in reply.result.summary
@@ -66,7 +66,7 @@ def test_bad_model_output_falls_back_safely(text, reason):
 def test_model_errors_fall_back_and_do_not_leak_details(caplog):
     error = RuntimeError("quota exceeded for text: my chest hurts")
     with caplog.at_level(logging.DEBUG):
-        reply = GeminiTriageClient(FakeModel(error=error)).triage("my chest hurts")
+        reply = AITriageClient(FakeModel(error=error)).triage("my chest hurts")
     assert reply.fallback_reason == "model_error"
     assert reply.tokens_used is None
     assert "RuntimeError" in caplog.text
@@ -74,11 +74,11 @@ def test_model_errors_fall_back_and_do_not_leak_details(caplog):
 
 
 def test_endpoint_reports_tokens_and_fallback(monkeypatch):
-    monkeypatch.setattr(main, "client", GeminiTriageClient(FakeModel(json.dumps(VALID), tokens=99)))
+    monkeypatch.setattr(main, "client", AITriageClient(FakeModel(json.dumps(VALID), tokens=99)))
     body = TestClient(main.app).post("/triage", json={"symptoms": "chest pain"}).json()
     assert body["urgency"] == "urgent" and body["tokens_used"] == 99 and body["fallback"] is False
 
-    monkeypatch.setattr(main, "client", GeminiTriageClient(FakeModel("nonsense")))
+    monkeypatch.setattr(main, "client", AITriageClient(FakeModel("nonsense")))
     body = TestClient(main.app).post("/triage", json={"symptoms": "chest pain"}).json()
     assert body["urgency"] == FALLBACK_URGENCY and body["fallback"] is True
 
@@ -88,3 +88,16 @@ def test_simple_clients_still_work_through_the_endpoint():
     body = TestClient(main.app).post("/triage", json={"symptoms": "mild cough"}).json()
     assert body["fallback"] is False and body["tokens_used"] is None
     assert isinstance(ClientReply, type)
+
+
+@pytest.mark.parametrize("deployment", ["gpt-5-mini", "o4-mini", "GPT-5"])
+def test_reasoning_models_get_a_reasoning_budget_and_no_temperature(deployment):
+    options = chat_options(deployment)
+    assert "temperature" not in options and "max_tokens" not in options
+    assert options["max_completion_tokens"] >= 1000
+    assert options["reasoning_effort"] == "low"
+
+
+@pytest.mark.parametrize("deployment", ["gpt-4.1-mini", "gpt-4o-mini", "open-model"])
+def test_chat_models_are_deterministic_and_short(deployment):
+    assert chat_options(deployment) == {"max_tokens": 512, "temperature": 0}

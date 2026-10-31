@@ -1,6 +1,6 @@
-# Loads db/schema.sql and the synthetic db/seed.sql into Cloud SQL the first time only
-# (skips if the users table exists). Runs through a Cloud SQL Auth Proxy sidecar with the same
-# keyless Google credentials as the app. The deploy workflow re-creates it on every deploy.
+# Loads db/schema.sql and the synthetic db/seed.sql into Azure Database for PostgreSQL the first
+# time only (skips if the users table exists). The database is only reachable inside the virtual
+# network. The deploy workflow re-creates this Job on every deploy.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -16,18 +16,6 @@ spec:
     spec:
       serviceAccountName: appointment-service
       restartPolicy: Never
-      initContainers:
-        - name: cloud-sql-proxy
-          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
-          restartPolicy: Always
-          args: ["--structured-logs", "--port=5432", "from-cloud-env"]
-          env:
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /var/run/gcp/credential-config.json
-          volumeMounts:
-            - name: gcp-credentials
-              mountPath: /var/run/gcp
-              readOnly: true
       containers:
         - name: psql
           image: postgres:16
@@ -35,7 +23,6 @@ spec:
           args:
             - |
               set -euo pipefail
-              for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
               if [ "$(psql "$DATABASE_URL" -tAc "select to_regclass('public.users') is not null")" = t ]; then
                 echo "schema already present, nothing to do"
               else
@@ -64,15 +51,3 @@ spec:
             readOnly: true
             volumeAttributes:
               secretProviderClass: clinic-key-vault
-        - name: gcp-credentials
-          projected:
-            sources:
-              - serviceAccountToken:
-                  audience: from-cloud-env
-                  expirationSeconds: 3600
-                  path: token
-              - configMap:
-                  name: gcp-credential-config
-                  items:
-                    - key: credential-config.json
-                      path: credential-config.json

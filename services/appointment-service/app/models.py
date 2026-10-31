@@ -52,7 +52,7 @@ class TriageAssessment(BaseModel):
     suggested_specialty: str
     red_flags: list[str] = []
     summary: str
-    tokens_used: int | None = None  # reported by the Gemini client; None for the fake
+    tokens_used: int | None = None  # reported by the Azure OpenAI client; None for the fake
     # True when this is a safe default rather than a real AI answer
     fallback: bool = False
 

@@ -1,4 +1,4 @@
-"""Checks for the Gemini prompt and the synthetic evaluation cases (tests/cases.json).
+"""Checks for the AI prompt and the synthetic evaluation cases (tests/cases.json).
 
 The cases are for evaluating the real model later. Here we only check they are well formed.
 """

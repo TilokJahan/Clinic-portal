@@ -1,4 +1,4 @@
-# Single Postgres for the laptop cluster. In Azure we use Cloud SQL instead (overlays/aks).
+# Single Postgres for the laptop cluster. In Azure we use PostgreSQL Flexible Server instead.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

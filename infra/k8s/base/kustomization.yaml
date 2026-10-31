@@ -9,4 +9,5 @@ resources:
   - config.yaml
   - appointment-service.yaml
   - triage-service.yaml
+  - frontend.yaml
   - network-policy.yaml

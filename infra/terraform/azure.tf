@@ -1,19 +1,131 @@
-# Azure: AKS (services), ACR (images), Key Vault (secrets), Static Web Apps (frontend),
-# a budget alert, and an identity GitHub Actions can use without any stored secret.
+# Everything runs on Azure: AKS (app), ACR (images), PostgreSQL Flexible Server (database),
+# Azure OpenAI (triage AI), Key Vault (secrets), a budget alert, and an identity GitHub Actions
+# can use without any stored secret. Sign-in is Microsoft Entra External ID (see variables.tf).
 
 data "azurerm_client_config" "current" {}
 
 locals {
-  api_host  = "${var.dns_label}.${var.azure_location}.cloudapp.azure.com"
+  app_host  = "${var.dns_label}.${var.location}.cloudapp.azure.com"
   namespace = "clinic-portal"
-  # Kubernetes service accounts that need cloud access (see infra/k8s/base)
+  # Kubernetes service accounts that get an Azure identity (see infra/k8s)
   workloads = ["appointment-service", "triage-service"]
+  tags      = { project = "clinic-portal" }
 }
 
 resource "azurerm_resource_group" "main" {
   name     = "rg-${var.prefix}"
-  location = var.azure_location
-  tags     = { project = "clinic-portal" }
+  location = var.location
+  tags     = local.tags
+}
+
+# --- Network: AKS and the database share a private virtual network ------------------------------
+
+resource "azurerm_virtual_network" "main" {
+  name                = "vnet-${var.prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  address_space       = ["10.20.0.0/16"]
+  tags                = local.tags
+}
+
+resource "azurerm_subnet" "aks" {
+  name                 = "snet-aks"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.20.0.0/22"]
+}
+
+resource "azurerm_subnet" "postgres" {
+  name                 = "snet-postgres"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.20.8.0/24"]
+
+  delegation {
+    name = "postgres"
+    service_delegation {
+      name    = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
+}
+
+resource "azurerm_private_dns_zone" "postgres" {
+  name                = "${var.prefix}.private.postgres.database.azure.com"
+  resource_group_name = azurerm_resource_group.main.name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
+  name                  = "vnet-link"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+}
+
+# --- Database ----------------------------------------------------------------------------------
+
+resource "random_password" "db" {
+  length  = 32
+  special = false # goes into a URL; 32 alphanumerics is plenty
+}
+
+resource "azurerm_postgresql_flexible_server" "db" {
+  name                          = "psql-${var.prefix}"
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  version                       = "16"
+  sku_name                      = var.postgres_sku
+  storage_mb                    = 32768
+  backup_retention_days         = 7
+  administrator_login           = "clinicadmin"
+  administrator_password        = random_password.db.result
+  delegated_subnet_id           = azurerm_subnet.postgres.id
+  private_dns_zone_id           = azurerm_private_dns_zone.postgres.id
+  public_network_access_enabled = false # only reachable from inside the virtual network
+  tags                          = local.tags
+
+  lifecycle {
+    ignore_changes = [zone] # Azure picks a zone; don't fight it on later plans
+  }
+
+  depends_on = [azurerm_private_dns_zone_virtual_network_link.postgres]
+}
+
+resource "azurerm_postgresql_flexible_server_database" "clinic" {
+  name      = "clinic"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
+# --- AI: Azure OpenAI, keyless ------------------------------------------------------------------
+
+resource "azurerm_cognitive_account" "openai" {
+  name                  = "oai-${var.prefix}"
+  resource_group_name   = azurerm_resource_group.main.name
+  location              = var.openai_location # where the subscription has model quota
+  kind                  = "OpenAI"
+  sku_name              = "S0"
+  custom_subdomain_name = "oai-${var.prefix}" # required for Entra ID (token) auth
+  local_auth_enabled    = false               # no API keys: Entra ID only
+  tags                  = local.tags
+}
+
+resource "azurerm_cognitive_deployment" "triage" {
+  name                 = var.openai_model.name
+  cognitive_account_id = azurerm_cognitive_account.openai.id
+
+  model {
+    format  = "OpenAI"
+    name    = var.openai_model.name
+    version = var.openai_model.version
+  }
+
+  sku {
+    name     = var.openai_model.sku
+    capacity = var.openai_model.capacity
+  }
 }
 
 # --- Images ------------------------------------------------------------------------------------
@@ -24,6 +136,7 @@ resource "azurerm_container_registry" "acr" {
   location            = azurerm_resource_group.main.location
   sku                 = "Basic"
   admin_enabled       = false # pull with the cluster identity, push with GitHub OIDC
+  tags                = local.tags
 }
 
 # --- Kubernetes --------------------------------------------------------------------------------
@@ -40,13 +153,14 @@ resource "azurerm_kubernetes_cluster" "aks" {
     vm_size         = var.aks_node_size
     node_count      = 1
     os_disk_size_gb = 64
+    vnet_subnet_id  = azurerm_subnet.aks.id
   }
 
   identity {
     type = "SystemAssigned"
   }
 
-  # Workload identity: pods get Azure tokens for their Kubernetes service account
+  # Workload identity: pods get Entra tokens for their Kubernetes service account
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
 
@@ -54,6 +168,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
     network_plugin      = "azure"
     network_plugin_mode = "overlay"
     network_policy      = "azure" # enforces infra/k8s/base/network-policy.yaml
+    service_cidr        = "10.0.0.0/16"
+    dns_service_ip      = "10.0.0.10"
   }
 
   key_vault_secrets_provider {
@@ -65,7 +181,14 @@ resource "azurerm_kubernetes_cluster" "aks" {
     dns_zone_ids = []
   }
 
-  tags = azurerm_resource_group.main.tags
+  tags = local.tags
+}
+
+# The cluster manages load balancers and IPs in our subnet
+resource "azurerm_role_assignment" "aks_network" {
+  scope                = azurerm_virtual_network.main.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.aks.identity[0].principal_id
 }
 
 resource "azurerm_role_assignment" "aks_pull" {
@@ -86,6 +209,7 @@ resource "azurerm_key_vault" "kv" {
   rbac_authorization_enabled = true
   soft_delete_retention_days = 7
   purge_protection_enabled   = false
+  tags                       = local.tags
 }
 
 # Whoever runs Terraform may write secrets
@@ -98,42 +222,49 @@ resource "azurerm_role_assignment" "kv_terraform" {
 resource "azurerm_key_vault_secret" "database_url" {
   name         = "database-url"
   key_vault_id = azurerm_key_vault.kv.id
-  # The Cloud SQL Auth Proxy sidecar listens on 127.0.0.1:5432 in the appointment pod
-  value      = "postgresql://${google_sql_user.app.name}:${random_password.db.result}@127.0.0.1:5432/${google_sql_database.clinic.name}"
+  value = format(
+    "postgresql://%s:%s@%s:5432/%s?sslmode=require",
+    azurerm_postgresql_flexible_server.db.administrator_login,
+    random_password.db.result,
+    azurerm_postgresql_flexible_server.db.fqdn,
+    azurerm_postgresql_flexible_server_database.clinic.name,
+  )
   depends_on = [azurerm_role_assignment.kv_terraform]
 }
 
-# Identity the pods use for Key Vault (federated with their Kubernetes service accounts)
+# --- Identity the pods use (federated with their Kubernetes service accounts) -------------------
+
 resource "azurerm_user_assigned_identity" "workload" {
   name                = "id-${var.prefix}-workload"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
+  tags                = local.tags
 }
 
 resource "azurerm_federated_identity_credential" "workload" {
-  for_each            = toset(local.workloads)
-  name                = each.value
-  resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.workload.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = azurerm_kubernetes_cluster.aks.oidc_issuer_url
-  subject             = "system:serviceaccount:${local.namespace}:${each.value}"
+  for_each  = toset(local.workloads)
+  name      = each.value
+  parent_id = azurerm_user_assigned_identity.workload.id
+  audience  = ["api://AzureADTokenExchange"]
+  issuer    = azurerm_kubernetes_cluster.aks.oidc_issuer_url
+  subject   = "system:serviceaccount:${local.namespace}:${each.value}"
 }
 
-resource "azurerm_role_assignment" "kv_workload" {
-  scope                = azurerm_key_vault.kv.id
-  role_definition_name = "Key Vault Secrets User"
+resource "azurerm_role_assignment" "workload" {
+  for_each = {
+    key_vault = { scope = azurerm_key_vault.kv.id, role = "Key Vault Secrets User" }
+    openai    = { scope = azurerm_cognitive_account.openai.id, role = "Cognitive Services OpenAI User" }
+  }
+  scope                = each.value.scope
+  role_definition_name = each.value.role
   principal_id         = azurerm_user_assigned_identity.workload.principal_id
 }
 
-# --- Frontend ----------------------------------------------------------------------------------
-
-resource "azurerm_static_web_app" "web" {
-  name                = "swa-${var.prefix}"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = var.static_web_app_location
-  sku_tier            = "Free"
-  sku_size            = "Free"
+# Lets whoever runs Terraform try the model from a laptop (scripts/evaluate_ai.py with az login)
+resource "azurerm_role_assignment" "openai_terraform" {
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = data.azurerm_client_config.current.object_id
 }
 
 # --- Budget ------------------------------------------------------------------------------------
@@ -165,7 +296,6 @@ resource "azurerm_consumption_budget_resource_group" "monthly" {
 }
 
 # --- GitHub Actions deploy identity (OIDC, no secrets) -----------------------------------------
-# Student tenants sometimes block app registrations; see infra/README.md for the fallback.
 
 resource "azuread_application" "github" {
   display_name = "github-${var.prefix}-deploy"
@@ -187,7 +317,6 @@ resource "azurerm_role_assignment" "github" {
   for_each = {
     acr_push = { scope = azurerm_container_registry.acr.id, role = "AcrPush" }
     aks_user = { scope = azurerm_kubernetes_cluster.aks.id, role = "Azure Kubernetes Service Cluster User Role" }
-    swa      = { scope = azurerm_static_web_app.web.id, role = "Contributor" }
   }
   scope                = each.value.scope
   role_definition_name = each.value.role

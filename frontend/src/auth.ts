@@ -3,14 +3,14 @@ import type { ApiResult, User } from './types'
 // Sign-in. Three modes, all ending in a Session with a bearer token:
 // - mock: no backend; pick a demo account, the token is a placeholder
 // - dev: POST /api/auth/dev-login for a synthetic seed account (backend AUTH_MODE=dev)
-// - identity-platform: email + password with Google Identity Platform (Firebase Auth); the ID
-//   token is refreshed by the SDK and verified by the backend (AUTH_MODE=identity-platform)
+// - entra: Microsoft Entra External ID (hosted sign-up/sign-in with email + password) via MSAL;
+//   the ID token is refreshed by MSAL and verified by the backend (AUTH_MODE=entra-external-id)
 
-export type AuthMode = 'mock' | 'dev' | 'identity-platform'
+export type AuthMode = 'mock' | 'dev' | 'entra'
 
 export const authMode: AuthMode =
   import.meta.env.VITE_API_MODE !== 'http' ? 'mock'
-    : import.meta.env.VITE_AUTH_MODE === 'identity-platform' ? 'identity-platform' : 'dev'
+    : import.meta.env.VITE_AUTH_MODE === 'entra' ? 'entra' : 'dev'
 
 export interface Session { token: string; user: User }
 
@@ -50,70 +50,64 @@ export async function demoLogin(email: string): Promise<ApiResult<Session>> {
   return result.ok ? { ok: true, data: { token: result.data.access_token, user: result.data.user } } : result
 }
 
-// --- Identity Platform (loaded only in that mode, so other builds don't ship Firebase) ---------
+// --- Entra External ID (loaded only in that mode, so other builds don't ship MSAL) ------------
 
-async function firebaseAuth() {
-  const [{ initializeApp, getApps }, authSdk] = await Promise.all([import('firebase/app'), import('firebase/auth')])
-  const app = getApps()[0] ?? initializeApp({
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+const SCOPES = ['openid', 'profile', 'email']
+let msalApp: Promise<import('@azure/msal-browser').PublicClientApplication> | null = null
+
+function msal() {
+  msalApp ??= import('@azure/msal-browser').then(async ({ PublicClientApplication }) => {
+    const app = new PublicClientApplication({
+      auth: {
+        clientId: import.meta.env.VITE_ENTRA_CLIENT_ID ?? '',
+        authority: import.meta.env.VITE_ENTRA_AUTHORITY, // https://<tenant>.ciamlogin.com/
+        redirectUri: window.location.origin,
+      },
+      cache: { cacheLocation: 'sessionStorage' },
+    })
+    await app.initialize()
+    return app
   })
-  return { auth: authSdk.getAuth(app), sdk: authSdk }
+  return msalApp
 }
 
-function firebaseMessage(error: unknown): string {
-  const code = (error as { code?: string })?.code ?? ''
-  if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) return 'Email or password is incorrect.'
-  if (code.includes('email-already-in-use')) return 'An account with this email already exists. Sign in instead.'
-  if (code.includes('weak-password')) return 'Please use a password of at least 6 characters.'
-  if (code.includes('too-many-requests')) return 'Too many attempts. Please wait a moment and try again.'
+function entraMessage(error: unknown): string {
+  const code = (error as { errorCode?: string })?.errorCode ?? ''
+  if (code === 'user_cancelled') return 'Sign-in was cancelled.'
+  if (code === 'popup_window_error') return 'Please allow pop-ups for this site, then try again.'
   return 'Sign-in failed. Please try again.'
 }
 
-async function finishIdentityLogin(idToken: string): Promise<ApiResult<Session>> {
+/** Opens Microsoft's sign-in page in a pop-up. With signUp, it opens on "create account". */
+export async function entraLogin(signUp = false): Promise<ApiResult<Session>> {
+  let idToken: string
+  try {
+    const app = await msal()
+    const result = await app.loginPopup({ scopes: SCOPES, prompt: signUp ? 'create' : 'select_account' })
+    app.setActiveAccount(result.account)
+    idToken = result.idToken
+  } catch (error) {
+    return fail(401, entraMessage(error))
+  }
   // The backend verifies the token and creates the user on first sign-in
   const me = await callApi<User>('/me', undefined, idToken)
   return me.ok ? { ok: true, data: { token: idToken, user: me.data } } : me
 }
 
-export async function passwordLogin(email: string, password: string): Promise<ApiResult<Session>> {
-  try {
-    const { auth, sdk } = await firebaseAuth()
-    const credential = await sdk.signInWithEmailAndPassword(auth, email, password)
-    if (!credential.user.emailVerified) {
-      await sdk.sendEmailVerification(credential.user)
-      await sdk.signOut(auth)
-      return fail(403, 'Please verify your email first. We just sent you a new link.')
-    }
-    return finishIdentityLogin(await credential.user.getIdToken())
-  } catch (error) {
-    return fail(401, firebaseMessage(error))
-  }
-}
-
-export async function signUp(email: string, password: string): Promise<ApiResult<null>> {
-  try {
-    const { auth, sdk } = await firebaseAuth()
-    const credential = await sdk.createUserWithEmailAndPassword(auth, email, password)
-    await sdk.sendEmailVerification(credential.user)
-    await sdk.signOut(auth)
-    return { ok: true, data: null }
-  } catch (error) {
-    return fail(400, firebaseMessage(error))
-  }
-}
-
-/** A fresh token for API calls. Identity Platform tokens expire hourly and are refreshed here. */
+/** A fresh token for API calls. Entra ID tokens expire after about an hour; MSAL renews them. */
 export async function currentToken(session: Session | null): Promise<string | null> {
   if (!session) return null
-  if (authMode !== 'identity-platform') return session.token
-  const { auth } = await firebaseAuth()
-  return auth.currentUser ? auth.currentUser.getIdToken() : null
+  if (authMode !== 'entra') return session.token
+  try {
+    const app = await msal()
+    const account = app.getActiveAccount() ?? app.getAllAccounts()[0]
+    if (!account) return null
+    return (await app.acquireTokenSilent({ scopes: SCOPES, account })).idToken
+  } catch {
+    return null // the API then answers 401 and the app returns to the sign-in page
+  }
 }
 
 export async function signOutEverywhere() {
-  if (authMode === 'identity-platform') {
-    const { auth, sdk } = await firebaseAuth()
-    await sdk.signOut(auth)
-  }
+  if (authMode === 'entra') await (await msal()).clearCache()
 }
