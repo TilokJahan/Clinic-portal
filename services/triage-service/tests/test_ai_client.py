@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.ai_client import AITriageClient, ClientReply, ModelReply
+from app.ai_client import AITriageClient, ClientReply, ModelReply, chat_options
 from app.models import Urgency
 from app.parsing import FALLBACK_URGENCY
 
@@ -88,3 +88,16 @@ def test_simple_clients_still_work_through_the_endpoint():
     body = TestClient(main.app).post("/triage", json={"symptoms": "mild cough"}).json()
     assert body["fallback"] is False and body["tokens_used"] is None
     assert isinstance(ClientReply, type)
+
+
+@pytest.mark.parametrize("deployment", ["gpt-5-mini", "o4-mini", "GPT-5"])
+def test_reasoning_models_get_a_reasoning_budget_and_no_temperature(deployment):
+    options = chat_options(deployment)
+    assert "temperature" not in options and "max_tokens" not in options
+    assert options["max_completion_tokens"] >= 1000
+    assert options["reasoning_effort"] == "low"
+
+
+@pytest.mark.parametrize("deployment", ["gpt-4.1-mini", "gpt-4o-mini", "open-model"])
+def test_chat_models_are_deterministic_and_short(deployment):
+    assert chat_options(deployment) == {"max_tokens": 512, "temperature": 0}

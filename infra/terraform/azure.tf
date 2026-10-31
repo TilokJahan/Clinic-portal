@@ -104,7 +104,7 @@ resource "azurerm_postgresql_flexible_server_database" "clinic" {
 resource "azurerm_cognitive_account" "openai" {
   name                  = "oai-${var.prefix}"
   resource_group_name   = azurerm_resource_group.main.name
-  location              = azurerm_resource_group.main.location
+  location              = var.openai_location # where the subscription has model quota
   kind                  = "OpenAI"
   sku_name              = "S0"
   custom_subdomain_name = "oai-${var.prefix}" # required for Entra ID (token) auth
@@ -242,13 +242,12 @@ resource "azurerm_user_assigned_identity" "workload" {
 }
 
 resource "azurerm_federated_identity_credential" "workload" {
-  for_each            = toset(local.workloads)
-  name                = each.value
-  resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.workload.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = azurerm_kubernetes_cluster.aks.oidc_issuer_url
-  subject             = "system:serviceaccount:${local.namespace}:${each.value}"
+  for_each  = toset(local.workloads)
+  name      = each.value
+  parent_id = azurerm_user_assigned_identity.workload.id
+  audience  = ["api://AzureADTokenExchange"]
+  issuer    = azurerm_kubernetes_cluster.aks.oidc_issuer_url
+  subject   = "system:serviceaccount:${local.namespace}:${each.value}"
 }
 
 resource "azurerm_role_assignment" "workload" {

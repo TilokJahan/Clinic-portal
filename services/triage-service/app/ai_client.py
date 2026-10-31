@@ -16,7 +16,7 @@ from app.prompts import SYSTEM_PROMPT, build_user_prompt
 
 logger = logging.getLogger("triage.ai")
 
-API_VERSION = "2024-10-21"
+API_VERSION = "2025-04-01-preview"  # needed for gpt-5 reasoning models
 
 
 @dataclass
@@ -36,6 +36,20 @@ class ModelReply:
 
 # (system prompt, user prompt) -> raw model text + token count. Injected so tests need no cloud.
 Generate = Callable[[str, str], ModelReply]
+
+
+def is_reasoning_model(deployment: str) -> bool:
+    """gpt-5* and o* models reason before answering and take different parameters."""
+    name = deployment.lower()
+    return name.startswith("gpt-5") or (name.startswith("o") and name[1:2].isdigit())
+
+
+def chat_options(deployment: str) -> dict:
+    """Request options that keep answers short, cheap and as repeatable as the model allows."""
+    if is_reasoning_model(deployment):
+        # No temperature for reasoning models; the token budget also covers their reasoning
+        return {"max_completion_tokens": 2000, "reasoning_effort": "low"}
+    return {"max_tokens": 512, "temperature": 0}
 
 
 def azure_openai_generate(endpoint: str, deployment: str) -> Generate:
@@ -62,8 +76,7 @@ def azure_openai_generate(endpoint: str, deployment: str) -> Generate:
                 {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
-            temperature=0,  # same input, same answer: easier to test and to audit
-            max_tokens=512,
+            **chat_options(deployment),
         )
         usage = response.usage
         return ModelReply(
@@ -83,7 +96,7 @@ class AITriageClient:
         endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
         if not endpoint:
             raise ValueError("TRIAGE_CLIENT=azure-openai needs AZURE_OPENAI_ENDPOINT")
-        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini").strip()
+        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini").strip()
         return cls(azure_openai_generate(endpoint, deployment))
 
     def triage(self, redacted_text: str) -> ClientReply:

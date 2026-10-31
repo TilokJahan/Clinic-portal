@@ -129,9 +129,10 @@ Azure OpenAI.
 
 ## AI client (`app/ai_client.py`, Azure OpenAI)
 
-- Calls the `gpt-4o-mini` deployment (`AZURE_OPENAI_DEPLOYMENT`) on the Azure OpenAI resource
+- Calls the `gpt-5-mini` deployment (`AZURE_OPENAI_DEPLOYMENT`) on the Azure OpenAI resource
   (`AZURE_OPENAI_ENDPOINT`) with the `openai` SDK: system prompt from `app/prompts.py`, JSON
-  output (`response_format=json_object`), temperature 0, at most 512 output tokens.
+  output (`response_format=json_object`). For reasoning models (gpt-5, o-series) it sets a 2,000-token
+  budget with `reasoning_effort=low`; for classic chat models, temperature 0 and 512 tokens.
 - **Credentials:** Microsoft Entra ID only (`DefaultAzureCredential`). On AKS that's workload
   identity; on a laptop it's `az login`. The resource has key auth turned off, and the identity
   needs the **Cognitive Services OpenAI User** role (Terraform grants it).

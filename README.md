@@ -9,7 +9,7 @@ Cloud Computing semester project. Patients book appointments and describe sympto
 Everything runs on **Microsoft Azure** (Canada Central):
 
 - **Compute:** AKS (frontend + both services), Container Registry
-- **Data and AI:** Azure Database for PostgreSQL Flexible Server (private network only), Azure OpenAI (`gpt-4o-mini`, keyless)
+- **Data and AI:** Azure Database for PostgreSQL Flexible Server (private network only), Azure OpenAI (`gpt-5-mini` in France Central, keyless)
 - **Identity and secrets:** Microsoft Entra External ID (patient sign-up/sign-in), Key Vault, workload identity
 - **Delivery and operations:** GitHub Actions (CI/CD with OIDC), Terraform (azurerm), Azure Storage (Terraform state), Prometheus + Grafana
 

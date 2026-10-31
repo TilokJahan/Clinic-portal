@@ -1,7 +1,8 @@
 # Infrastructure and deployment
 
-Everything runs on **Microsoft Azure**, in one region your subscription allows
-(default `canadacentral`; Azure for Students limits the regions you can use).
+Everything runs on **Microsoft Azure** in `canadacentral`, except Azure OpenAI in
+`francecentral`: our Azure for Students subscription only allows five regions and has chat-model
+quota only in France Central.
 
 | Folder | What it is |
 |---|---|
@@ -22,7 +23,7 @@ flowchart LR
     end
     appt -->|private, TLS| db[(PostgreSQL<br/>Flexible Server)]
   end
-  triage -->|redacted text only,<br/>Entra token| oai[Azure OpenAI<br/>gpt-4o-mini]
+  triage -->|redacted text only,<br/>Entra token| oai[Azure OpenAI<br/>gpt-5-mini, France Central]
   kv[(Key Vault)] -.->|CSI driver,<br/>workload identity| appt
   appt -.->|verify ID tokens| idp
   gh[GitHub Actions] -->|OIDC| acr[(Container Registry)]
@@ -110,7 +111,7 @@ our tenant.
 
 Roughly, with the defaults: AKS control plane free + one `Standard_B2s` node (~$35/month),
 PostgreSQL `B1ms` (~$15/month), ACR Basic (~$5/month), Key Vault and Entra External ID free at
-this scale (External ID is free for the first 50,000 monthly users), `gpt-4o-mini` well under a
+this scale (External ID is free for the first 50,000 monthly users), `gpt-5-mini` well under a
 cent per intake. The budget alert emails everyone at 25/50/80/100 % of `budget_amount_usd`.
 
 **Stop paying when you're not demoing:**

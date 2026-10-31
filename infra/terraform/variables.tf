@@ -32,8 +32,14 @@ variable "postgres_sku" {
   default     = "B_Standard_B1ms"
 }
 
+variable "openai_location" {
+  description = "Region for Azure OpenAI. Our student subscription has chat-model quota in francecentral but not canadacentral (az cognitiveservices usage list -l <region>)."
+  type        = string
+  default     = "francecentral"
+}
+
 variable "openai_model" {
-  description = "Azure OpenAI model for triage."
+  description = "Azure OpenAI model for triage. gpt-5-mini: generally available, supported until 2027-02, 500K TPM quota on our subscription."
   type = object({
     name     = string
     version  = string
@@ -41,10 +47,10 @@ variable "openai_model" {
     capacity = number # thousands of tokens per minute
   })
   default = {
-    name     = "gpt-4o-mini"
-    version  = "2024-07-18"
+    name     = "gpt-5-mini"
+    version  = "2025-08-07"
     sku      = "GlobalStandard"
-    capacity = 10
+    capacity = 50
   }
 }
 
