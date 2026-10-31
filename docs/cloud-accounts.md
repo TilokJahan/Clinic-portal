@@ -6,7 +6,7 @@ Everything runs on Azure (we dropped Google Cloud: the account couldn't be used)
 > **Never put passwords, keys, tokens, card numbers or subscription secrets in this file.**
 > IDs below are fine to share inside the team. Secrets go in Azure Key Vault.
 
-Status: **deployed 2026-10-31**. Remaining blanks: credit amount and expiry, teammate invites.
+Status: **deployed 2026-10-31**, teammates have access. Remaining blanks: credit amount and expiry.
 
 ## Decision
 
@@ -24,11 +24,35 @@ Why this account: ____ (for example the most credit left, or the latest expiry d
 
 ## Access
 
-| Teammate | GitHub | Azure role | Azure invite works? |
-|---|---|---|---|
-| ____ (owner) | ____ | Owner | n/a |
-| ____ | ____ | Contributor | ☐ |
-| ____ | ____ | Contributor | ☐ |
+Granted 2026-10-31. Everyone is in the WMU tenant, so no guest invitations were needed.
+
+| Teammate | GitHub | Roles |
+|---|---|---|
+| Tabarek Al Ghnaimawi (owner) | @Tabarek92 | **Owner** of the subscription |
+| Ruth Bahre | @ruthbah | Reader (subscription), Contributor (`rg-clinicportal`), Storage Blob Data Contributor (Terraform state), Key Vault Secrets Officer (`kv-clinicportal`), Cognitive Services OpenAI User (`oai-clinicportal`) |
+| Tilok Jahan | @TilokJahan | same as Ruth |
+
+What the roles allow:
+
+| Role | Scope | Lets them |
+|---|---|---|
+| Reader | whole subscription | See everything (also other projects in the subscription, read-only); Terraform needs it to check resource-provider registrations |
+| Contributor | `rg-clinicportal` | Manage the app's resources: start/stop AKS and PostgreSQL, push images, deploy, see costs |
+| Storage Blob Data Contributor | `clinicportaltf9d0ae9` (Terraform state) | Run `terraform plan` / `apply` against the shared state |
+| Key Vault Secrets Officer | `kv-clinicportal` | Let Terraform manage the database URL and demo-token secrets |
+| Cognitive Services OpenAI User | `oai-clinicportal` | Run `scripts/evaluate_ai.py` from a laptop with `az login` |
+
+Only the owner can grant access to others or apply Terraform changes that create new role
+assignments (Contributor can't assign roles).
+
+Getting started for teammates:
+
+```bash
+az login
+az account set --subscription e8fb3009-935e-458c-8a9f-5ddef82f3155
+terraform -chdir=infra/terraform init -backend-config="storage_account_name=clinicportaltf9d0ae9"
+terraform -chdir=infra/terraform plan   # should say "No changes"
+```
 
 ## Budget alerts
 
@@ -47,10 +71,10 @@ Write down anything that blocked us and what we did instead, for example:
 
 ## Checklist (issue #4)
 
-- [ ] Decided which Azure subscription hosts the shared resources
-- [ ] Other two teammates added as Contributor
+- [x] Decided which Azure subscription hosts the shared resources
+- [x] Other two teammates added as Contributor
 - [ ] Each teammate confirmed they can see the resource group
-- [ ] Budget alerts active on Azure
+- [x] Budget alerts active on Azure (Terraform: $50/month, 25/50/80/100 %, to tjs3201@wmich.edu)
 - [ ] Expiry dates, owners and restrictions filled in above
 
 ---
