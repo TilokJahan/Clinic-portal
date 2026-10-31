@@ -6,6 +6,7 @@ from typing import Any
 
 import psycopg
 
+from app.metrics import STREAM_CLIENTS
 from app.models import QueueEntry, TriageRecord
 
 TRIAGE_COLUMNS = """
@@ -72,16 +73,20 @@ async def queue_events(
     with any number of service replicas. A comment line every heartbeat keeps proxies from
     closing an idle connection.
     """
-    async with await connect() as conn:
-        await conn.execute("LISTEN queue_changed")
+    STREAM_CLIENTS.inc()
+    try:
+        async with await connect() as conn:
+            await conn.execute("LISTEN queue_changed")
 
-        async def snapshot() -> str:
-            cur = await conn.execute(QUEUE_SQL)
-            return sse("queue", [to_entry(row) for row in await cur.fetchall()])
+            async def snapshot() -> str:
+                cur = await conn.execute(QUEUE_SQL)
+                return sse("queue", [to_entry(row) for row in await cur.fetchall()])
 
-        yield await snapshot()
-        while not await is_disconnected():
-            changed = False
-            async for _ in conn.notifies(timeout=heartbeat_seconds, stop_after=1):
-                changed = True
-            yield await snapshot() if changed else ": keep-alive\n\n"
+            yield await snapshot()
+            while not await is_disconnected():
+                changed = False
+                async for _ in conn.notifies(timeout=heartbeat_seconds, stop_after=1):
+                    changed = True
+                yield await snapshot() if changed else ": keep-alive\n\n"
+    finally:
+        STREAM_CLIENTS.dec()

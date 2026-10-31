@@ -45,5 +45,33 @@ services:
     depends_on:
       - appointment-service
 
+  # Monitoring is opt-in: docker compose --profile monitoring up
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: [monitoring]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - appointment-service
+      - triage-service
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-locally}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/clinic-portal.json
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   pgdata:
