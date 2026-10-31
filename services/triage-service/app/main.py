@@ -3,6 +3,7 @@ import time
 
 from fastapi import FastAPI
 
+from app import metrics
 from app.gemini_client import ClientReply
 from app.models import TriageRequest, TriageResponse
 from app.redaction import redact
@@ -13,6 +14,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s %(me
 logger = logging.getLogger("triage")
 
 app = FastAPI(title="Triage Service", version="0.1.0")
+metrics.install(app)
 
 client: TriageClient = get_client()
 
@@ -30,13 +32,22 @@ def triage(request: TriageRequest) -> TriageResponse:
     reply = client.triage(redacted.text)
     if not isinstance(reply, ClientReply):  # simple clients (fake, tests) return a bare result
         reply = ClientReply(reply)
+    elapsed = time.perf_counter() - started
+    metrics.TRIAGE_SECONDS.observe(elapsed)
+    metrics.TRIAGE_REQUESTS.labels(
+        reply.result.urgency.value, reply.fallback_reason or "none"
+    ).inc()
+    for entity in redacted.entities:
+        metrics.REDACTED_ENTITIES.labels(entity).inc()
+    if reply.tokens_used:
+        metrics.LLM_TOKENS.inc(reply.tokens_used)
     logger.info(
         "triage done urgency=%s redacted_entities=%s fallback=%s tokens=%s duration_ms=%d",
         reply.result.urgency,
         ",".join(redacted.entities) or "none",
         reply.fallback_reason or "no",
         reply.tokens_used,
-        (time.perf_counter() - started) * 1000,
+        elapsed * 1000,
     )
     return TriageResponse(
         **reply.result.model_dump(),

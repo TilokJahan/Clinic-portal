@@ -133,6 +133,12 @@ jobs:
           curl -sf http://localhost:8080/api/health | grep -q appointment-service
           curl -sN --max-time 3 "http://localhost:8080/api/queue/stream?access_token=$CLINICIAN_TOKEN" \
             | head -c 200 | grep -q '^event: queue'
+      - name: Metrics are recorded but not public
+        run: |
+          curl -sf http://localhost:8001/metrics | grep -q '^appointments_booked_total 1.0$'
+          curl -sf http://localhost:8001/metrics | grep -q 'intakes_total{urgency="urgent"} 1.0'
+          curl -sf http://localhost:8002/metrics | grep -q 'redacted_entities_total{entity="PERSON"} 1.0'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/metrics)" = 404
       - name: Logs on failure
         if: failure()
         run: docker compose logs
