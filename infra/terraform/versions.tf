@@ -27,7 +27,8 @@ terraform {
 }
 
 provider "azurerm" {
-  subscription_id = var.azure_subscription_id
+  subscription_id     = var.azure_subscription_id
+  storage_use_azuread = true # never use storage account keys
 
   # Student subscriptions start with few providers registered; register exactly what we use
   resource_provider_registrations = "none"
@@ -50,6 +51,10 @@ provider "azurerm" {
     }
     cognitive_account {
       purge_soft_delete_on_destroy = true
+    }
+    storage {
+      # Our storage account has keys turned off; manage it through Azure Resource Manager only
+      data_plane_available = false
     }
     resource_group {
       prevent_deletion_if_contains_resources = false
