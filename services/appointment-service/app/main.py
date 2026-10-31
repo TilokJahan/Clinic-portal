@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
@@ -5,6 +6,7 @@ from typing import Annotated
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
@@ -45,6 +47,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
 
+# The frontend on Azure Static Web Apps calls the API on another origin. List the allowed
+# origins (comma separated) in CORS_ALLOWED_ORIGINS; empty means same-origin only (compose/nginx).
+_origins = [o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_methods=["GET", "POST", "PATCH"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
 Triage = Annotated[TriageServiceClient, Depends(get_triage_client)]
 
@@ -53,6 +66,13 @@ Triage = Annotated[TriageServiceClient, Depends(get_triage_client)]
 def health() -> dict[str, str]:
     """Liveness check used by docker-compose, Kubernetes probes, and CI."""
     return {"status": "ok", "service": "appointment-service"}
+
+
+@app.get("/ready")
+def ready(conn: Conn) -> dict[str, str]:
+    """Readiness probe: only take traffic when the database answers."""
+    conn.execute("SELECT 1")
+    return {"status": "ready"}
 
 
 @app.post("/auth/dev-login")

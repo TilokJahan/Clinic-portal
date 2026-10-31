@@ -1,0 +1,43 @@
+# Everything on a laptop cluster (kind): our Postgres, dev sign-in, fake AI client, frontend.
+#   kubectl kustomize infra/k8s/overlays/local --load-restrictor=LoadRestrictionsNone \
+#     | kubectl apply -f -
+# (the restrictor flag lets Kustomize read db/schema.sql and db/seed.sql from the service folder)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: clinic-portal
+resources:
+  - ../../base
+  - postgres.yaml
+  - frontend.yaml
+images:
+  - name: appointment-service
+    newName: clinic/appointment-service
+    newTag: local
+  - name: triage-service
+    newName: clinic/triage-service
+    newTag: local
+  - name: frontend
+    newName: clinic/frontend
+    newTag: local
+configMapGenerator:
+  - name: postgres-init
+    files:
+      - 01-schema.sql=../../../../services/appointment-service/db/schema.sql
+      - 02-seed.sql=../../../../services/appointment-service/db/seed.sql
+secretGenerator:
+  # Local-only throwaway values. Real secrets come from Azure Key Vault (see overlays/aks).
+  - name: clinic-secrets
+    literals:
+      - DATABASE_URL=postgresql://clinic:clinic-local@postgres:5432/clinic
+      - AUTH_DEV_SECRET=kind-local-only-0123456789abcdef
+      - POSTGRES_PASSWORD=clinic-local
+generatorOptions:
+  disableNameSuffixHash: true
+patches:
+  # Images are loaded into kind, never pulled
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
