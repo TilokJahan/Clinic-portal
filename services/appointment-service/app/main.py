@@ -9,14 +9,27 @@ from fastapi.responses import StreamingResponse
 from psycopg import errors
 
 from app import db
+from app.auth import (
+    AnyUser,
+    Clinician,
+    CurrentUser,
+    Patient,
+    auth_mode,
+    issue_dev_token,
+    stream_clinician,
+)
 from app.models import (
     Appointment,
     AppointmentCreate,
+    DevLogin,
     IntakeCreate,
+    MyAppointment,
     QueueEntry,
     Slot,
+    TokenResponse,
     TriageRecord,
     TriageReview,
+    UserOut,
 )
 from app.queue import TRIAGE_COLUMNS, load_queue, queue_events
 from app.triage import TriageServiceClient, get_triage_client
@@ -41,9 +54,29 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "appointment-service"}
 
 
+@app.post("/auth/dev-login")
+def dev_login(conn: Conn, body: DevLogin) -> TokenResponse:
+    """Demo sign-in for the synthetic seed users. Only exists when AUTH_MODE=dev."""
+    if auth_mode() != "dev":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    row = conn.execute(
+        "SELECT id, email, role FROM users WHERE email = %s", (body.email.strip().lower(),)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown demo account")
+    user = CurrentUser(**row)
+    return TokenResponse(access_token=issue_dev_token(user), user=UserOut(**row))
+
+
+@app.get("/me")
+def me(user: AnyUser) -> UserOut:
+    return UserOut(id=user.id, email=user.email, role=user.role)
+
+
 @app.get("/slots")
 def list_slots(
     conn: Conn,
+    _: AnyUser,
     day: Annotated[date, Query(alias="date", description="Day to search, YYYY-MM-DD (UTC)")],
     provider_id: Annotated[int | None, Query(gt=0)] = None,
 ) -> list[Slot]:
@@ -69,9 +102,28 @@ def list_slots(
     return [Slot(**row) for row in rows]
 
 
+@app.get("/appointments")
+def my_appointments(conn: Conn, user: Patient) -> list[MyAppointment]:
+    """The signed-in patient's bookings that aren't cancelled, soonest first."""
+    rows = conn.execute(
+        """
+        SELECT a.id, a.slot_id, a.status, a.created_at, s.starts_at,
+               p.name AS provider_name, p.specialty, t.id IS NOT NULL AS intake_submitted
+        FROM appointments a
+        JOIN slots s ON s.id = a.slot_id
+        JOIN providers p ON p.id = s.provider_id
+        LEFT JOIN triage_results t ON t.appointment_id = a.id
+        WHERE a.patient_id = %s AND a.status <> 'cancelled'
+        ORDER BY s.starts_at
+        """,
+        (user.id,),
+    ).fetchall()
+    return [MyAppointment(**row) for row in rows]
+
+
 @app.post("/appointments", status_code=status.HTTP_201_CREATED)
-def book_appointment(conn: Conn, body: AppointmentCreate) -> Appointment:
-    """Book a slot. Returns 409 if it is already booked or has already started."""
+def book_appointment(conn: Conn, user: Patient, body: AppointmentCreate) -> Appointment:
+    """Book a slot for the signed-in patient. 409 if it is already booked or has started."""
     try:
         with conn.transaction():
             slot = conn.execute(
@@ -81,36 +133,35 @@ def book_appointment(conn: Conn, body: AppointmentCreate) -> Appointment:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
             if not slot["upcoming"]:
                 raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
-            patient = conn.execute(
-                "SELECT 1 FROM users WHERE id = %s AND role = 'patient'", (body.patient_id,)
-            ).fetchone()
-            if patient is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
             row = conn.execute(
                 """
                 INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s)
                 RETURNING id, patient_id, slot_id, status, created_at
                 """,
-                (body.patient_id, body.slot_id),
+                (user.id, body.slot_id),
             ).fetchone()
     except errors.UniqueViolation as exc:
         # The unique index on active appointments catches double booking, even concurrent ones.
         raise HTTPException(status.HTTP_409_CONFLICT, "Slot is already booked") from exc
+    except errors.ForeignKeyViolation as exc:
+        # A valid token for a user that has since been removed
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user") from exc
     return Appointment(**row)
 
 
 @app.post("/intake", status_code=status.HTTP_201_CREATED)
-def submit_intake(conn: Conn, triage: Triage, body: IntakeCreate) -> TriageRecord:
+def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate) -> TriageRecord:
     """Send the symptoms to the triage service and store its result for the clinician.
 
     Only the structured result is stored. The symptom text is never written to the database.
     """
     appointment = conn.execute(
         "SELECT a.status, t.id AS triage_id FROM appointments a "
-        "LEFT JOIN triage_results t ON t.appointment_id = a.id WHERE a.id = %s",
-        (body.appointment_id,),
+        "LEFT JOIN triage_results t ON t.appointment_id = a.id "
+        "WHERE a.id = %s AND a.patient_id = %s",
+        (body.appointment_id, user.id),
     ).fetchone()
-    if appointment is None:
+    if appointment is None:  # also when it belongs to someone else: don't reveal it exists
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
     if appointment["status"] == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Appointment is cancelled")
@@ -144,14 +195,16 @@ def submit_intake(conn: Conn, triage: Triage, body: IntakeCreate) -> TriageRecor
 
 
 @app.get("/queue")
-def get_queue(conn: Conn) -> list[QueueEntry]:
+def get_queue(conn: Conn, _: Clinician) -> list[QueueEntry]:
     """Waiting patients, most urgent first."""
     return load_queue(conn)
 
 
 @app.get("/queue/stream", response_class=StreamingResponse)
 async def stream_queue(
-    request: Request, connect: Annotated[object, Depends(db.get_async_connect)]
+    request: Request,
+    connect: Annotated[object, Depends(db.get_async_connect)],
+    _: Annotated[CurrentUser, Depends(stream_clinician)],
 ) -> StreamingResponse:
     """Server-Sent Events. Sends the whole queue on connect and again after every change."""
     return StreamingResponse(
@@ -162,21 +215,18 @@ async def stream_queue(
 
 
 @app.patch("/triage/{triage_id}")
-def review_triage(conn: Conn, triage_id: int, body: TriageReview) -> TriageRecord:
+def review_triage(conn: Conn, user: Clinician, triage_id: int, body: TriageReview) -> TriageRecord:
     """Clinician accepts (same urgency) or overrides (different urgency) the AI suggestion."""
     row = conn.execute(
         f"""
         UPDATE triage_results AS t
         SET final_urgency = %(final)s, overridden = (%(final)s <> t.ai_urgency),
-            reviewed_at = now()
+            reviewed_at = now(), reviewed_by = %(user)s
         WHERE t.id = %(id)s
         RETURNING {TRIAGE_COLUMNS}
         """,
-        {"final": body.final_urgency, "id": triage_id},
+        {"final": body.final_urgency, "id": triage_id, "user": user.id},
     ).fetchone()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Triage result not found")
     return TriageRecord.model_validate(row)
-
-
-# TODO (Backend A): auth (JWT roles: patient, clinician, admin). See docs/api.md.

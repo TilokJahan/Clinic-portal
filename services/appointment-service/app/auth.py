@@ -1,0 +1,169 @@
+"""Authentication and role checks.
+
+Two modes, chosen by AUTH_MODE:
+
+- "dev" (local and docker compose): POST /auth/dev-login issues an HS256 token for one of the
+  synthetic seed users, signed with AUTH_DEV_SECRET. No passwords: it is for demos only and is
+  disabled in any other mode.
+- "identity-platform" (cloud): the frontend signs in with Google Identity Platform and sends
+  the ID token. We verify it against Google's public keys (RS256, issuer and audience =
+  GCP_PROJECT_ID), then look the user up by email. A first-time user becomes a patient unless
+  an admin has set a "role" custom claim.
+
+Either way the endpoints only see a CurrentUser with our own users.id and role.
+"""
+
+import os
+import time
+from dataclasses import dataclass
+from typing import Annotated
+
+import jwt
+import psycopg
+from fastapi import Depends, HTTPException, Query, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app import db
+
+ROLES = ("patient", "clinician", "admin")
+DEV_TOKEN_SECONDS = 8 * 3600
+GOOGLE_JWKS_URL = (
+    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+)
+
+
+@dataclass(frozen=True)
+class CurrentUser:
+    id: int
+    email: str
+    role: str
+
+
+def auth_mode() -> str:
+    return os.environ.get("AUTH_MODE", "dev").strip().lower()
+
+
+def _dev_secret() -> str:
+    secret = os.environ.get("AUTH_DEV_SECRET", "")
+    if len(secret) < 16:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "AUTH_DEV_SECRET is not set")
+    return secret
+
+
+def issue_dev_token(user: CurrentUser) -> str:
+    now = int(time.time())
+    claims = {
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "iat": now,
+        "exp": now + DEV_TOKEN_SECONDS,
+    }
+    return jwt.encode(claims, _dev_secret(), algorithm="HS256")
+
+
+_jwks_client: jwt.PyJWKClient | None = None
+
+
+def _verify_identity_platform(token: str) -> dict:
+    global _jwks_client
+    project = os.environ.get("GCP_PROJECT_ID", "")
+    if not project:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "GCP_PROJECT_ID is not set")
+    if _jwks_client is None:
+        _jwks_client = jwt.PyJWKClient(GOOGLE_JWKS_URL, cache_keys=True)
+    key = _jwks_client.get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        key.key,
+        algorithms=["RS256"],
+        audience=project,
+        issuer=f"https://securetoken.google.com/{project}",
+    )
+
+
+def _user_from_identity_platform(conn: psycopg.Connection, claims: dict) -> CurrentUser:
+    email = claims.get("email")
+    if not email or not claims.get("email_verified", False):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "A verified email is required")
+    role = claims.get("role") if claims.get("role") in ROLES else "patient"
+    # Create on first sign-in; never downgrade or upgrade an existing user's role from here.
+    row = conn.execute(
+        """
+        INSERT INTO users (email, role) VALUES (%s, %s)
+        ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+        RETURNING id, email, role
+        """,
+        (email.lower(), role),
+    ).fetchone()
+    return CurrentUser(**row)
+
+
+def decode(token: str, conn: psycopg.Connection) -> CurrentUser:
+    try:
+        if auth_mode() == "dev":
+            claims = jwt.decode(token, _dev_secret(), algorithms=["HS256"])
+            return CurrentUser(id=int(claims["sub"]), email=claims["email"], role=claims["role"])
+        if auth_mode() == "identity-platform":
+            return _user_from_identity_platform(conn, _verify_identity_platform(token))
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Unknown AUTH_MODE {auth_mode()!r}")
+
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def current_user(
+    conn: Annotated[psycopg.Connection, Depends(db.get_conn)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    # EventSource can't send headers, so GET /queue/stream may pass the token as a query param
+    access_token: Annotated[str | None, Query(include_in_schema=False)] = None,
+) -> CurrentUser:
+    token = credentials.credentials if credentials else access_token
+    if not token:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Sign in required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return decode(token, conn)
+
+
+def stream_clinician(
+    access_token: Annotated[str | None, Query(include_in_schema=False)] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
+) -> CurrentUser:
+    """Like require("clinician", "admin") for the long-lived SSE stream.
+
+    Uses a short-lived connection for the lookup, so an open stream doesn't keep a pooled
+    connection checked out for hours.
+    """
+    token = credentials.credentials if credentials else access_token
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in required")
+    with db.connection() as conn:
+        user = decode(token, conn)
+    if user.role not in ("clinician", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed for your role")
+    return user
+
+
+def require(*roles: str):
+    """Dependency factory: the signed-in user must have one of these roles."""
+
+    def check(user: Annotated[CurrentUser, Depends(current_user)]) -> CurrentUser:
+        if user.role not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed for your role")
+        return user
+
+    return check
+
+
+AnyUser = Annotated[CurrentUser, Depends(current_user)]
+Patient = Annotated[CurrentUser, Depends(require("patient"))]
+Clinician = Annotated[CurrentUser, Depends(require("clinician", "admin"))]

@@ -1,4 +1,5 @@
-import type { Api, ApiResult, Appointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
+import { sessionUser } from '../session'
+import type { Api, ApiResult, Appointment, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
 
 // In-memory stand-in for the appointment service, shaped exactly like docs/api.md.
 // Synthetic data only. Used by `npm run dev`; `npm run dev:api` talks to the real backend.
@@ -8,7 +9,8 @@ const PROVIDERS = [
   { id: 2, name: 'Dr. Sam Sample', specialty: 'Dermatology' },
   { id: 3, name: 'Dr. Jordan Test', specialty: 'Cardiology' },
 ]
-const PATIENT_IDS = [1, 2, 3]
+// The mock has no tokens: the patient is whoever is signed in
+const mockPatientId = () => sessionUser()?.id ?? 0
 
 const pause = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms))
 const ok = <T>(data: T): ApiResult<T> => ({ ok: true, data })
@@ -114,11 +116,11 @@ export const mockApi: Api = {
     const booked = new Set(appointments.filter((a) => a.status !== 'cancelled').map((a) => a.slot_id))
     return ok(slotsFor(date).filter((s) => !booked.has(s.id) && Date.parse(s.starts_at) > now && (!providerId || s.provider_id === providerId)))
   },
-  async book(patientId, slotId) {
+  async book(slotId) {
     await pause(400)
+    const patientId = mockPatientId()
     const slot = slots.get(slotId)
     if (!slot) return fail(404, 'Slot not found')
-    if (!PATIENT_IDS.includes(patientId)) return fail(404, 'Patient not found')
     if (Date.parse(slot.starts_at) <= Date.now()) return fail(409, 'Slot has already started')
     if (takenByOthers.has(slotId) || appointments.some((a) => a.slot_id === slotId && a.status !== 'cancelled'))
       return fail(409, 'Slot is already booked')
@@ -127,9 +129,19 @@ export const mockApi: Api = {
     notify()
     return ok(appt)
   },
+  async myAppointments() {
+    await pause(150)
+    return ok(appointments
+      .filter((a) => a.patient_id === mockPatientId() && a.status !== 'cancelled')
+      .map((a): MyAppointment => {
+        const slot = slots.get(a.slot_id)!
+        return { id: a.id, slot_id: a.slot_id, status: a.status, created_at: a.created_at, starts_at: slot.starts_at, provider_name: slot.provider_name, specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id) }
+      })
+      .sort((x, y) => x.starts_at.localeCompare(y.starts_at)))
+  },
   async submitIntake(appointmentId, symptoms) {
     await pause(600)
-    const appt = appointments.find((a) => a.id === appointmentId)
+    const appt = appointments.find((a) => a.id === appointmentId && a.patient_id === mockPatientId())
     if (!appt) return fail(404, 'Appointment not found')
     if (appt.status === 'cancelled') return fail(409, 'Appointment is cancelled')
     if (triage.some((t) => t.appointment_id === appointmentId)) return fail(409, 'Intake already submitted')

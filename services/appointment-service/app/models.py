@@ -21,8 +21,7 @@ class Slot(BaseModel):
 
 
 class AppointmentCreate(BaseModel):
-    # Until auth is in place the patient is sent in the body. Later it comes from the JWT.
-    patient_id: int = Field(gt=0)
+    # The patient comes from the sign-in token, never from the body.
     slot_id: int = Field(gt=0)
 
 
@@ -86,3 +85,32 @@ class QueueEntry(BaseModel):
     booked_at: datetime
     # None until the patient submits an intake
     triage: TriageRecord | None
+
+
+class DevLogin(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    role: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+
+class MyAppointment(BaseModel):
+    """A patient's own booking, as listed by GET /appointments."""
+
+    id: int
+    slot_id: int
+    status: AppointmentStatus
+    created_at: datetime
+    starts_at: datetime
+    provider_name: str
+    specialty: str
+    intake_submitted: bool

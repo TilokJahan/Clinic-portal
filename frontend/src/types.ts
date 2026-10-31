@@ -53,9 +53,31 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting'
 
+export type Role = 'patient' | 'clinician' | 'admin'
+
+export interface User {
+  id: number
+  email: string
+  role: Role
+}
+
+/** A patient's own booking (GET /appointments). */
+export interface MyAppointment {
+  id: number
+  slot_id: number
+  status: AppointmentStatus
+  created_at: string
+  starts_at: string
+  provider_name: string
+  specialty: string
+  intake_submitted: boolean
+}
+
 export interface Api {
   getSlots(date: string, providerId?: number): Promise<ApiResult<Slot[]>>
-  book(patientId: number, slotId: number): Promise<ApiResult<Appointment>>
+  /** Books for the signed-in patient (the backend takes the patient from the token). */
+  book(slotId: number): Promise<ApiResult<Appointment>>
+  myAppointments(): Promise<ApiResult<MyAppointment[]>>
   submitIntake(appointmentId: number, symptoms: string): Promise<ApiResult<TriageRecord>>
   getQueue(): Promise<ApiResult<QueueEntry[]>>
   /** Calls onQueue with the full queue on connect and after every change. Returns unsubscribe. */
