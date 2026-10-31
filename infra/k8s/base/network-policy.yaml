@@ -1,0 +1,21 @@
+# The triage service is internal: only the appointment service (and in-cluster metrics
+# scrapers in kube-system, e.g. Azure Managed Prometheus) may call it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: triage-service-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: triage-service
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: appointment-service
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 8000

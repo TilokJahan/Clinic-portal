@@ -1,0 +1,15 @@
+# Azure workload identity for both service accounts (Key Vault access). The client ID is
+# filled in from cloud.env by the replacements in kustomization.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appointment-service
+  annotations:
+    azure.workload.identity/client-id: from-cloud-env
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: triage-service
+  annotations:
+    azure.workload.identity/client-id: from-cloud-env
