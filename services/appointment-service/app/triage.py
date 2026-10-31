@@ -15,6 +15,7 @@ FALLBACK = TriageAssessment(
     suggested_specialty="General Practice",
     red_flags=[],
     summary="Automatic triage was unavailable. A clinician should review this intake manually.",
+    fallback=True,
 )
 
 

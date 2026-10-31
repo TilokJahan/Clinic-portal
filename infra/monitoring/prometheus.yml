@@ -1,0 +1,12 @@
+# Prometheus for docker compose (`docker compose --profile monitoring up`).
+# On AKS the same targets are scraped through the pod annotations in infra/k8s.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: appointment-service
+    static_configs:
+      - targets: ["appointment-service:8000"]
+  - job_name: triage-service
+    static_configs:
+      - targets: ["triage-service:8000"]

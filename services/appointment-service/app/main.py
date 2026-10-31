@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import db
+from app import db, metrics
 from app.auth import (
     AnyUser,
     Clinician,
@@ -43,6 +43,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
+metrics.install(app)
 
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
 Triage = Annotated[TriageServiceClient, Depends(get_triage_client)]
@@ -132,6 +133,7 @@ def book_appointment(conn: Conn, user: Patient, body: AppointmentCreate) -> Appo
             if slot is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
             if not slot["upcoming"]:
+                metrics.BOOKING_CONFLICTS.labels("started").inc()
                 raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
             row = conn.execute(
                 """
@@ -142,10 +144,12 @@ def book_appointment(conn: Conn, user: Patient, body: AppointmentCreate) -> Appo
             ).fetchone()
     except errors.UniqueViolation as exc:
         # The unique index on active appointments catches double booking, even concurrent ones.
+        metrics.BOOKING_CONFLICTS.labels("already_booked").inc()
         raise HTTPException(status.HTTP_409_CONFLICT, "Slot is already booked") from exc
     except errors.ForeignKeyViolation as exc:
         # A valid token for a user that has since been removed
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user") from exc
+    metrics.BOOKINGS.inc()
     return Appointment(**row)
 
 
@@ -169,6 +173,9 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
         raise HTTPException(status.HTTP_409_CONFLICT, "Intake already submitted")
 
     assessment, latency_ms = triage.assess(body.symptoms)
+    metrics.TRIAGE_CALL_SECONDS.observe(latency_ms / 1000)
+    if assessment.fallback:
+        metrics.TRIAGE_FALLBACKS.inc()
     try:
         with conn.transaction():
             row = conn.execute(
@@ -192,6 +199,7 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
     except errors.UniqueViolation as exc:
         # Two intakes for the same appointment raced each other
         raise HTTPException(status.HTTP_409_CONFLICT, "Intake already submitted") from exc
+    metrics.INTAKES.labels(assessment.urgency.value).inc()
     return TriageRecord.model_validate(row)
 
 
@@ -230,4 +238,5 @@ def review_triage(conn: Conn, user: Clinician, triage_id: int, body: TriageRevie
     ).fetchone()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Triage result not found")
+    metrics.REVIEWS.labels("overridden" if row["overridden"] else "accepted").inc()
     return TriageRecord.model_validate(row)

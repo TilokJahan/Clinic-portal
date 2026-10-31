@@ -53,6 +53,8 @@ class TriageAssessment(BaseModel):
     red_flags: list[str] = []
     summary: str
     tokens_used: int | None = None  # reported by the Gemini client; None for the fake
+    # True when this is a safe default rather than a real AI answer
+    fallback: bool = False
 
 
 class TriageRecord(BaseModel):
