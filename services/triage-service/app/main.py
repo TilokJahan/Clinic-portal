@@ -8,7 +8,8 @@ from app.ai_client import ClientReply
 from app.labs.extract import IMAGES, PDF, Extractor, get_extractor
 from app.labs.interpret import LabInterpretation, interpret
 from app.labs.summary import get_summarizer
-from app.models import TriageRequest, TriageResponse
+from app.models import TriageRequest, TriageResponse, Urgency
+from app.red_flags import find_red_flags
 from app.redaction import redact
 from app.triage_client import TriageClient, get_client
 
@@ -40,6 +41,19 @@ def triage(request: TriageRequest) -> TriageResponse:
     reply = client.triage(redacted.text)
     if not isinstance(reply, ClientReply):  # simple clients (fake, tests) return a bare result
         reply = ClientReply(reply)
+    # Fixed red-flag rules: any match is urgent, whatever the AI said (it can't lower a rule)
+    rule_flags = find_red_flags(redacted.text)
+    if rule_flags:
+        result = reply.result
+        reply.result = result.model_copy(
+            update={
+                "urgency": Urgency.URGENT,
+                "red_flags": list(dict.fromkeys([*rule_flags, *result.red_flags])),
+            }
+        )
+        metrics.RULE_RED_FLAGS.labels(
+            "raised" if result.urgency != Urgency.URGENT else "agreed"
+        ).inc()
     elapsed = time.perf_counter() - started
     metrics.TRIAGE_SECONDS.observe(elapsed)
     metrics.TRIAGE_REQUESTS.labels(
@@ -50,8 +64,10 @@ def triage(request: TriageRequest) -> TriageResponse:
     if reply.tokens_used:
         metrics.LLM_TOKENS.inc(reply.tokens_used)
     logger.info(
-        "triage done urgency=%s redacted_entities=%s fallback=%s tokens=%s duration_ms=%d",
+        "triage done urgency=%s rule_flags=%d redacted_entities=%s fallback=%s tokens=%s "
+        "duration_ms=%d",
         reply.result.urgency,
+        len(rule_flags),
         ",".join(redacted.entities) or "none",
         reply.fallback_reason or "no",
         reply.tokens_used,

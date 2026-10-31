@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.ai_client import AITriageClient  # noqa: E402
+from app.red_flags import find_red_flags  # noqa: E402
 from app.redaction import redact  # noqa: E402
 
 ORDER = {"routine": 0, "soon": 1, "urgent": 2}
@@ -28,8 +29,12 @@ def main() -> int:
     client = AITriageClient.from_env()
     correct = under_triaged = fallbacks = tokens = 0
     for case in cases:
-        reply = client.triage(redact(case["symptoms"]).text)
-        got, expected = reply.result.urgency.value, case["expected_urgency"]
+        text = redact(case["symptoms"]).text
+        reply = client.triage(text)
+        ai_urgency = reply.result.urgency.value
+        # Same as the endpoint: a red-flag rule makes it urgent, whatever the AI said
+        got = "urgent" if find_red_flags(text) else ai_urgency
+        expected = case["expected_urgency"]
         correct += got == expected
         fallbacks += reply.fallback_reason is not None
         tokens += reply.tokens_used or 0
@@ -37,6 +42,8 @@ def main() -> int:
         under_triaged += missed_urgent
         mark = "ok " if got == expected else ("!!!" if missed_urgent else "-- ")
         note = reply.fallback_reason or ""
+        if got != ai_urgency:
+            note = f"{note} (AI said {ai_urgency}; raised by a red-flag rule)".strip()
         print(f"{mark} {case['id']:<24} expected {expected:<8} got {got:<8} {note}")
     n = len(cases)
     print(
