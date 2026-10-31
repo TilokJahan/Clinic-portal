@@ -1,6 +1,7 @@
 import os
 from typing import Protocol
 
+from app.gemini_client import ClientReply
 from app.models import TriageResult, Urgency
 
 
@@ -11,7 +12,7 @@ class TriageClient(Protocol):
     Later, add a GeminiTriageClient that calls Vertex AI and swap it in via TRIAGE_CLIENT.
     """
 
-    def triage(self, redacted_text: str) -> TriageResult: ...
+    def triage(self, redacted_text: str) -> "TriageResult | ClientReply": ...
 
 
 class FakeTriageClient:
@@ -40,5 +41,7 @@ def get_client() -> TriageClient:
     if name == "fake":
         return FakeTriageClient()
     if name == "gemini":
-        raise NotImplementedError("The Gemini client is not built yet; use TRIAGE_CLIENT=fake")
+        from app.gemini_client import GeminiTriageClient
+
+        return GeminiTriageClient.from_env()
     raise ValueError(f"Unknown TRIAGE_CLIENT {name!r}. Use 'fake' or 'gemini'.")

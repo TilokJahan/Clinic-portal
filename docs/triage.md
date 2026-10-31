@@ -108,7 +108,7 @@ and how long it took. Symptom text is never logged, before or after redaction. B
 covered by tests in `tests/test_triage.py`.
 
 The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no network) or `gemini`
-(not built yet).
+(Vertex AI, below).
 
 ## Gemini prompt (design, issue #8)
 
@@ -130,3 +130,31 @@ The client comes from `TRIAGE_CLIENT`: `fake` (default, canned answers, no netwo
 - **Region:** `us-central1` (`GCP_REGION` in `.env.example`). Gemini Flash is available there.
 - **Project:** the shared Google Cloud project recorded in `docs/cloud-accounts.md` (issue #4,
   Backend A). Set it as `GCP_PROJECT_ID`. The service account needs the **Vertex AI User** role.
+
+## Gemini client (`app/gemini_client.py`)
+
+- Calls Gemini on Vertex AI with the Google Gen AI SDK (`google-genai`): system prompt from
+  `app/prompts.py`, JSON output, temperature 0, at most 512 output tokens. Model from
+  `GEMINI_MODEL` (default `gemini-2.5-flash`), project and region from `GCP_PROJECT_ID` /
+  `GCP_REGION`.
+- **Credentials:** Application Default Credentials only. Locally:
+  `gcloud auth application-default login`. In the cloud: Workload Identity (see `infra/`).
+  The service account needs `roles/aiplatform.user`. No API keys anywhere.
+- Every reply goes through `parse_llm_output()`. Invalid JSON, extra fields, or a model error
+  (quota, network, safety block) return the safe fallback with `fallback: true`, so an intake
+  never fails because of the AI.
+- Logs metadata only: the exception type, the fallback reason, the token count. Never the prompt,
+  the reply or the exception message, because those can echo the patient's words.
+- `POST /triage` returns `tokens_used`; the appointment service stores it in
+  `triage_results.tokens_used` next to `latency_ms`.
+
+### Evaluating against the 15 cases
+
+```bash
+cd services/triage-service
+gcloud auth application-default login
+GCP_PROJECT_ID=<project> python scripts/evaluate_gemini.py
+```
+
+It prints expected vs actual urgency per case and exits non-zero if any `urgent` case is scored
+lower. Run it after any prompt change.

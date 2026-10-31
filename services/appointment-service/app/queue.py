@@ -11,7 +11,7 @@ from app.models import QueueEntry, TriageRecord
 TRIAGE_COLUMNS = """
     t.id, t.appointment_id, t.ai_urgency, t.final_urgency,
     coalesce(t.final_urgency, t.ai_urgency) AS urgency, t.overridden, t.suggested_specialty,
-    t.red_flags, t.summary, t.latency_ms, t.created_at, t.reviewed_at
+    t.red_flags, t.summary, t.latency_ms, t.tokens_used, t.created_at, t.reviewed_at
 """
 
 # Waiting patients (booked or checked in). Most urgent first; within the same urgency, whoever

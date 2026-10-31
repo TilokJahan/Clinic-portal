@@ -175,8 +175,8 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
                 f"""
                 INSERT INTO triage_results AS t
                     (appointment_id, ai_urgency, suggested_specialty, red_flags, summary,
-                     latency_ms)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                     latency_ms, tokens_used)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING {TRIAGE_COLUMNS}
                 """,
                 (
@@ -186,6 +186,7 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
                     assessment.red_flags,
                     assessment.summary,
                     latency_ms,
+                    assessment.tokens_used,
                 ),
             ).fetchone()
     except errors.UniqueViolation as exc:

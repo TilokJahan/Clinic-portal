@@ -21,6 +21,7 @@ class FakeTriage:
 
     def __init__(self):
         self.calls: list[str] = []
+        self.tokens: int | None = None
 
     def assess(self, symptoms: str) -> tuple[TriageAssessment, int]:
         self.calls.append(symptoms)
@@ -31,6 +32,7 @@ class FakeTriage:
                 suggested_specialty="Emergency Medicine" if urgent else "General Practice",
                 red_flags=["chest pain"] if urgent else [],
                 summary="Test summary.",
+                tokens_used=self.tokens,
             ),
             12,
         )
@@ -126,6 +128,13 @@ def test_intake_rejects_invalid_body(client, booked, triage, body):
 
 def _client_with(handler) -> TriageServiceClient:
     return TriageServiceClient("http://triage", transport=httpx.MockTransport(handler))
+
+
+def test_tokens_reported_by_the_triage_service_are_stored(client, db, booked, triage):
+    triage.tokens = 456
+    body = _intake(client, 1, "cough").json()
+    assert body["tokens_used"] == 456
+    assert db.execute("SELECT tokens_used FROM triage_results").fetchone()[0] == 456
 
 
 def test_triage_client_parses_the_service_response():
