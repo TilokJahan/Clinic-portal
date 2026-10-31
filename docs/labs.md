@@ -79,9 +79,17 @@ Synthetic reports are in [`docs/samples/`](samples/) (made by
 | `lab-report-critical-potassium.pdf` | urgent, "Critical: potassium 6.8 mmol/L"; creatinine high |
 | `lab-report-high-glucose-mmol.pdf` | soon; glucose 11.2 mmol/L → 201.8 mg/dL, HbA1c and cholesterol high |
 | `lab-report-normal.pdf` | routine, "All results within range" |
+| `lab-report-photo-low-potassium.png` | a photo (needs Azure OCR): urgent, "Critical: potassium 2.3 mmol/L"; sodium low |
 
 Sign in as a demo patient, book, attach a report on the home page, then switch to the clinician
 account to review and approve.
+
+## Checked on the live site (2026-10-31)
+
+Azure AI Document Intelligence read every row of the critical-potassium PDF and of the photo
+(lowest OCR confidence 97.7 %), the rules flagged potassium 6.8 as critical high and 2.3 as
+critical low, the queue showed the reason, the patient saw nothing until a clinician approved, and
+the logs held only metadata. About 7–9 seconds per report (OCR + AI).
 
 ## Limits
 
