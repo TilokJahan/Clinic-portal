@@ -144,6 +144,22 @@ Azure OpenAI.
 - `POST /triage` returns `tokens_used`; the appointment service stores it in
   `triage_results.tokens_used` next to `latency_ms`.
 
+### Evaluation results (2026-10-31, gpt-5-mini on Azure OpenAI)
+
+| Run | Exact | Under-triaged urgent | Notes |
+|---|---|---|---|
+| AI only | 14 / 15 | 1 (self-harm) | Azure OpenAI's content filter refused the self-harm text (`content_filter`, category `self_harm`), and the fallback said "soon" |
+| AI + red-flag rules (current) | 15 / 15 | 0 | `app/red_flags.py` makes self-harm, chest pain, breathing trouble, stroke signs, fainting, severe bleeding, anaphylaxis and thunderclap headache urgent whatever the AI says; a content-filter refusal now falls back to **urgent** |
+
+About 12,000 tokens for the 15 cases (≈800 per intake).
+
+### Red-flag rules
+
+Like the lab critical values, a few phrases are handled by fixed rules (`app/red_flags.py`) on the
+redacted text. Any match makes the result urgent and adds the flag (e.g. "possible self-harm
+risk") to `red_flags`. The AI can still raise other cases; it can never lower a rule result. The
+rules catch all six urgent cases in `tests/cases.json` and none of the routine ones (tested).
+
 ### Evaluating against the 15 cases
 
 ```bash

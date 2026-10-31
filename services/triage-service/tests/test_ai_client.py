@@ -79,7 +79,7 @@ def test_endpoint_reports_tokens_and_fallback(monkeypatch):
     assert body["urgency"] == "urgent" and body["tokens_used"] == 99 and body["fallback"] is False
 
     monkeypatch.setattr(main, "client", AITriageClient(FakeModel("nonsense")))
-    body = TestClient(main.app).post("/triage", json={"symptoms": "chest pain"}).json()
+    body = TestClient(main.app).post("/triage", json={"symptoms": "sore knee for a week"}).json()
     assert body["urgency"] == FALLBACK_URGENCY and body["fallback"] is True
 
 

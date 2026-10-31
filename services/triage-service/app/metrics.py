@@ -22,6 +22,11 @@ REDACTED_ENTITIES = Counter(
     ["entity"],
 )
 LLM_TOKENS = Counter("llm_tokens_total", "Tokens used by the AI model (input + output)")
+RULE_RED_FLAGS = Counter(
+    "triage_rule_red_flags_total",
+    "Intakes where a fixed red-flag rule matched: 'raised' = the AI had said less than urgent",
+    ["outcome"],
+)
 LAB_REPORTS = Counter(
     "lab_reports_total",
     "Lab reports interpreted, by outcome and lab urgency",
@@ -44,6 +49,8 @@ for _urgency in ("routine", "soon", "urgent"):
     TRIAGE_REQUESTS.labels(_urgency, "none")
 for _entity in ("PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS", "LOCATION", "US_SSN"):
     REDACTED_ENTITIES.labels(_entity)
+for _outcome in ("raised", "agreed"):
+    RULE_RED_FLAGS.labels(_outcome)
 for _flag in ("normal", "low", "high", "critical_low", "critical_high", "unknown"):
     LAB_RESULTS.labels(_flag)
 for _status in ("ready", "needs_review"):
