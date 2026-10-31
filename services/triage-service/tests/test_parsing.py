@@ -35,9 +35,9 @@ def test_missing_red_flags_defaults_to_empty_list():
 @pytest.mark.parametrize(
     ("raw", "reason"),
     [
-        pytest.param(json.dumps({**VALID, "urgency": "critical"}), 
-                     "schema_error", 
-                     id="bad-urgency"),
+        pytest.param(
+            json.dumps({**VALID, "urgency": "critical"}), "schema_error", id="bad-urgency"
+        ),
         pytest.param(
             json.dumps({k: v for k, v in VALID.items() if k != "summary"}),
             "schema_error",

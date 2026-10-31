@@ -32,6 +32,7 @@ export interface TriageRecord {
   red_flags: string[]
   summary: string
   latency_ms: number | null
+  tokens_used?: number | null
   created_at: string
   reviewed_at: string | null
 }

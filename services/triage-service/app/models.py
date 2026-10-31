@@ -22,3 +22,15 @@ class TriageResult(BaseModel):
     suggested_specialty: str = Field(min_length=1)
     red_flags: list[str] = Field(default_factory=list)
     summary: str = Field(min_length=1)
+
+
+class TriageResponse(BaseModel):
+    """What POST /triage returns: the validated result plus metadata about the AI call."""
+
+    urgency: Urgency
+    suggested_specialty: str
+    red_flags: list[str]
+    summary: str
+    tokens_used: int | None = None
+    # True when the model failed or answered badly and the safe fallback was used
+    fallback: bool = False
