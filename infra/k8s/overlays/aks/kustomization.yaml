@@ -1,6 +1,6 @@
-# Azure Kubernetes Service. Values that differ per deployment (registry, image tag, project,
-# Key Vault, identities, host name) live in cloud.env and are filled in by the deploy workflow
-# from Terraform outputs (see infra/README.md). Nothing secret is stored here.
+# Azure Kubernetes Service. Values that differ per deployment (registry, image tag, Key Vault,
+# identities, host name, sign-in tenant) live in cloud.env and are filled in by the deploy
+# workflow from Terraform outputs (see infra/README.md). Nothing secret is stored here.
 #   kubectl kustomize infra/k8s/overlays/aks --load-restrictor=LoadRestrictionsNone | kubectl apply -f -
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -17,27 +17,23 @@ images:
   - name: triage-service
     newName: REGISTRY/triage-service
     newTag: latest
+  - name: frontend
+    newName: REGISTRY/frontend
+    newTag: latest
 configMapGenerator:
   - name: clinic-config
     behavior: merge
     literals:
-      - AUTH_MODE=identity-platform
-      - TRIAGE_CLIENT=gemini
-      # Keyless access to Google Cloud from AKS (Workload Identity Federation)
-      - GOOGLE_APPLICATION_CREDENTIALS=/var/run/gcp/credential-config.json
+      - AUTH_MODE=entra-external-id
+      - TRIAGE_CLIENT=azure-openai
     envs:
       - cloud.env
-  - name: gcp-credential-config
-    files:
-      - credential-config.json
   - name: db-schema
     files:
       - 01-schema.sql=../../../../services/appointment-service/db/schema.sql
       - 02-seed.sql=../../../../services/appointment-service/db/seed.sql
 patches:
   - path: patches/workload-identity.yaml
-  - path: patches/appointment-cloud-sql.yaml
-  - path: patches/triage-gcp.yaml
 replacements:
   # Azure workload identity client ID for both service accounts, from cloud.env
   - source:
@@ -74,22 +70,7 @@ replacements:
   - source:
       kind: ConfigMap
       name: clinic-config
-      fieldPath: data.CLOUD_SQL_INSTANCE
-    targets:
-      - select:
-          kind: Deployment
-          name: appointment-service
-        fieldPaths:
-          - spec.template.spec.initContainers.[name=cloud-sql-proxy].args.2
-      - select:
-          kind: Job
-          name: db-init
-        fieldPaths:
-          - spec.template.spec.initContainers.[name=cloud-sql-proxy].args.2
-  - source:
-      kind: ConfigMap
-      name: clinic-config
-      fieldPath: data.API_HOST
+      fieldPath: data.APP_HOST
     targets:
       - select:
           kind: Ingress
@@ -105,16 +86,3 @@ replacements:
           kind: NginxIngressController
         fieldPaths:
           - spec.loadBalancerAnnotations.[service.beta.kubernetes.io/azure-dns-label-name]
-  - source:
-      kind: ConfigMap
-      name: clinic-config
-      fieldPath: data.GCP_WIF_AUDIENCE
-    targets:
-      - select:
-          kind: Deployment
-        fieldPaths:
-          - spec.template.spec.volumes.[name=gcp-credentials].projected.sources.0.serviceAccountToken.audience
-      - select:
-          kind: Job
-        fieldPaths:
-          - spec.template.spec.volumes.[name=gcp-credentials].projected.sources.0.serviceAccountToken.audience

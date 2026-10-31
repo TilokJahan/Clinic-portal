@@ -5,11 +5,11 @@ Two modes, chosen by AUTH_MODE:
 - "dev" (local and docker compose): POST /auth/dev-login issues an HS256 token for one of the
   synthetic seed users, signed with AUTH_DEV_SECRET. No passwords: it is for demos only and is
   disabled in any other mode.
-- "identity-platform" (cloud): the frontend signs in with Google Identity Platform and sends
-  the ID token. We verify it against Google's public keys (RS256, issuer and audience =
-  GCP_PROJECT_ID), then look the user up by email. Emails listed in ADMIN_EMAILS or
-  CLINICIAN_EMAILS (comma separated, set by operators) get that role; anyone else signing up
-  becomes a patient, unless an admin set a "role" custom claim before their first sign-in.
+- "entra-external-id" (cloud): the frontend signs in with Microsoft Entra External ID (hosted
+  sign-up/sign-in with email and password) and sends the ID token. We verify it against the
+  tenant's public keys (RS256, issuer = the tenant, audience = ENTRA_CLIENT_ID), then look the
+  user up by email. Emails listed in ADMIN_EMAILS or CLINICIAN_EMAILS (comma separated, set by
+  operators) get that role; anyone else signing up becomes a patient.
 
 Either way the endpoints only see a CurrentUser with our own users.id and role.
 """
@@ -28,9 +28,6 @@ from app import db
 
 ROLES = ("patient", "clinician", "admin")
 DEV_TOKEN_SECONDS = 8 * 3600
-GOOGLE_JWKS_URL = (
-    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
-)
 
 
 @dataclass(frozen=True)
@@ -66,20 +63,28 @@ def issue_dev_token(user: CurrentUser) -> str:
 _jwks_client: jwt.PyJWKClient | None = None
 
 
-def _verify_identity_platform(token: str) -> dict:
+def _verify_entra(token: str) -> dict:
+    """Check an Entra External ID token: signature (tenant keys), issuer, audience, expiry."""
     global _jwks_client
-    project = os.environ.get("GCP_PROJECT_ID", "")
-    if not project:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "GCP_PROJECT_ID is not set")
+    tenant_id = os.environ.get("ENTRA_TENANT_ID", "")
+    subdomain = os.environ.get("ENTRA_TENANT_SUBDOMAIN", "")
+    client_id = os.environ.get("ENTRA_CLIENT_ID", "")
+    if not (tenant_id and subdomain and client_id):
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "ENTRA_TENANT_ID, ENTRA_TENANT_SUBDOMAIN and ENTRA_CLIENT_ID must be set",
+        )
     if _jwks_client is None:
-        _jwks_client = jwt.PyJWKClient(GOOGLE_JWKS_URL, cache_keys=True)
+        _jwks_client = jwt.PyJWKClient(
+            f"https://{subdomain}.ciamlogin.com/{tenant_id}/discovery/v2.0/keys", cache_keys=True
+        )
     key = _jwks_client.get_signing_key_from_jwt(token)
     return jwt.decode(
         token,
         key.key,
         algorithms=["RS256"],
-        audience=project,
-        issuer=f"https://securetoken.google.com/{project}",
+        audience=client_id,
+        issuer=f"https://{tenant_id}.ciamlogin.com/{tenant_id}/v2.0",
     )
 
 
@@ -87,11 +92,14 @@ def _listed(variable: str) -> set[str]:
     return {e.strip().lower() for e in os.environ.get(variable, "").split(",") if e.strip()}
 
 
-def _user_from_identity_platform(conn: psycopg.Connection, claims: dict) -> CurrentUser:
-    email = (claims.get("email") or "").lower()
-    if not email or not claims.get("email_verified", False):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "A verified email is required")
-    # Operator-controlled lists win and also apply to existing users (that's how staff are added).
+def _user_from_claims(conn: psycopg.Connection, claims: dict) -> CurrentUser:
+    # The sign-up flow verifies the email address before the account exists. The address is in
+    # "email" (optional claim) or, for email sign-in accounts, "preferred_username".
+    email = (claims.get("email") or claims.get("preferred_username") or "").lower()
+    if "@" not in email:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "The token has no email address")
+    # Operator-controlled lists set staff roles, also for existing users (that's how staff are
+    # added). Everyone else is created as a patient on first sign-in and keeps their role.
     configured = (
         "admin"
         if email in _listed("ADMIN_EMAILS")
@@ -99,10 +107,6 @@ def _user_from_identity_platform(conn: psycopg.Connection, claims: dict) -> Curr
         if email in _listed("CLINICIAN_EMAILS")
         else None
     )
-    first_time_role = configured or (
-        claims.get("role") if claims.get("role") in ROLES else "patient"
-    )
-    # Otherwise create on first sign-in and never change an existing user's role from a token.
     row = conn.execute(
         """
         INSERT INTO users (email, role) VALUES (%(email)s, %(role)s)
@@ -110,7 +114,7 @@ def _user_from_identity_platform(conn: psycopg.Connection, claims: dict) -> Curr
             SET role = coalesce(%(configured)s, users.role)
         RETURNING id, email, role
         """,
-        {"email": email, "role": first_time_role, "configured": configured},
+        {"email": email, "role": configured or "patient", "configured": configured},
     ).fetchone()
     return CurrentUser(**row)
 
@@ -120,8 +124,8 @@ def decode(token: str, conn: psycopg.Connection) -> CurrentUser:
         if auth_mode() == "dev":
             claims = jwt.decode(token, _dev_secret(), algorithms=["HS256"])
             return CurrentUser(id=int(claims["sub"]), email=claims["email"], role=claims["role"])
-        if auth_mode() == "identity-platform":
-            return _user_from_identity_platform(conn, _verify_identity_platform(token))
+        if auth_mode() == "entra-external-id":
+            return _user_from_claims(conn, _verify_entra(token))
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,

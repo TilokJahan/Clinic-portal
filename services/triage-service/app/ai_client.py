@@ -1,0 +1,98 @@
+"""The AI triage client: Azure OpenAI turns redacted symptom text into a validated TriageResult.
+
+Keyless: authenticates with Microsoft Entra ID through DefaultAzureCredential (workload identity
+on AKS, `az login` on a laptop). The Azure OpenAI resource has key auth turned off.
+Never log the prompt, the reply or exceptions that may echo them: only metadata.
+"""
+
+import logging
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from app.models import TriageResult
+from app.parsing import parse_llm_output
+from app.prompts import SYSTEM_PROMPT, build_user_prompt
+
+logger = logging.getLogger("triage.ai")
+
+API_VERSION = "2024-10-21"
+
+
+@dataclass
+class ClientReply:
+    """A triage client's answer plus what the appointment service records about the call."""
+
+    result: TriageResult
+    tokens_used: int | None = None
+    fallback_reason: str | None = None  # None = the model's answer was valid
+
+
+@dataclass
+class ModelReply:
+    text: str
+    tokens_used: int | None
+
+
+# (system prompt, user prompt) -> raw model text + token count. Injected so tests need no cloud.
+Generate = Callable[[str, str], ModelReply]
+
+
+def azure_openai_generate(endpoint: str, deployment: str) -> Generate:
+    """Build the real Azure OpenAI call. Imported lazily so the fake client needs no SDK setup."""
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    from openai import AzureOpenAI
+
+    token_provider = get_bearer_token_provider(
+        DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+    )
+    client = AzureOpenAI(
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+        api_version=API_VERSION,
+        timeout=20,
+        max_retries=2,
+    )
+
+    def generate(system_prompt: str, user_prompt: str) -> ModelReply:
+        response = client.chat.completions.create(
+            model=deployment,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,  # same input, same answer: easier to test and to audit
+            max_tokens=512,
+        )
+        usage = response.usage
+        return ModelReply(
+            text=response.choices[0].message.content or "",
+            tokens_used=usage.total_tokens if usage else None,
+        )
+
+    return generate
+
+
+class AITriageClient:
+    def __init__(self, generate: Generate):
+        self._generate = generate
+
+    @classmethod
+    def from_env(cls) -> "AITriageClient":
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
+        if not endpoint:
+            raise ValueError("TRIAGE_CLIENT=azure-openai needs AZURE_OPENAI_ENDPOINT")
+        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini").strip()
+        return cls(azure_openai_generate(endpoint, deployment))
+
+    def triage(self, redacted_text: str) -> ClientReply:
+        try:
+            reply = self._generate(SYSTEM_PROMPT, build_user_prompt(redacted_text))
+        except Exception as exc:  # network, quota, auth, content filter: never fail the intake
+            logger.warning("AI call failed (%s), using fallback", type(exc).__name__)
+            return ClientReply(parse_llm_output("").result, None, "model_error")
+        outcome = parse_llm_output(reply.text)
+        if outcome.is_fallback:
+            logger.warning("AI reply rejected (%s), using fallback", outcome.fallback_reason)
+        return ClientReply(outcome.result, reply.tokens_used, outcome.fallback_reason)

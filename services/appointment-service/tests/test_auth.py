@@ -47,7 +47,7 @@ def test_dev_login_unknown_account(client, people):
 
 
 def test_dev_login_does_not_exist_outside_dev_mode(client, people, monkeypatch):
-    monkeypatch.setenv("AUTH_MODE", "identity-platform")
+    monkeypatch.setenv("AUTH_MODE", "entra-external-id")
     assert client.post("/auth/dev-login", json={"email": "p1@example.com"}).status_code == 404
 
 
@@ -161,54 +161,106 @@ def test_stream_needs_a_clinician(client, people, stream_db):
     assert client.get("/queue/stream", params={"access_token": token}).status_code == 403
 
 
-# --- identity platform ----------------------------------------------------------------------
+# --- Entra External ID ----------------------------------------------------------------------
 
 
-def test_identity_platform_user_is_created_as_patient_on_first_sign_in(people, db, monkeypatch):
-    monkeypatch.setenv("AUTH_MODE", "identity-platform")
-    claims = {"email": "New.Person@example.com", "email_verified": True}
-    monkeypatch.setattr(auth, "_verify_identity_platform", lambda token: claims)
+def _sign_in_as(monkeypatch, claims):
+    monkeypatch.setenv("AUTH_MODE", "entra-external-id")
+    monkeypatch.setattr(auth, "_verify_entra", lambda token: claims)
+
+
+def test_external_user_is_created_as_patient_on_first_sign_in(people, db, monkeypatch):
+    _sign_in_as(monkeypatch, {"email": "New.Person@example.com"})
     db.row_factory = dict_row
     user = auth.decode("any", db)
     assert (user.email, user.role) == ("new.person@example.com", "patient")
-    # Signing in again finds the same user
-    assert auth.decode("any", db).id == user.id
+    assert auth.decode("any", db).id == user.id  # signing in again finds the same user
 
 
-def test_identity_platform_rejects_unverified_email(people, db, monkeypatch):
-    monkeypatch.setenv("AUTH_MODE", "identity-platform")
-    monkeypatch.setattr(
-        auth,
-        "_verify_identity_platform",
-        lambda t: {"email": "x@example.com", "email_verified": False},
-    )
+def test_email_can_come_from_preferred_username(people, db, monkeypatch):
+    _sign_in_as(monkeypatch, {"preferred_username": "p1@example.com"})
+    db.row_factory = dict_row
+    assert auth.decode("any", db).id == 1
+
+
+def test_token_without_an_email_is_rejected(people, db, monkeypatch):
+    _sign_in_as(monkeypatch, {"name": "No Email"})
     with pytest.raises(auth.HTTPException) as exc:
         auth.decode("any", db)
     assert exc.value.status_code == 401
 
 
-def test_identity_platform_keeps_an_existing_role(people, db, monkeypatch):
-    monkeypatch.setenv("AUTH_MODE", "identity-platform")
-    # A token claiming admin can't upgrade an existing clinician
-    claims = {"email": "doc@example.com", "email_verified": True, "role": "admin"}
-    monkeypatch.setattr(auth, "_verify_identity_platform", lambda token: claims)
+def test_a_token_cannot_change_an_existing_role(people, db, monkeypatch):
+    _sign_in_as(monkeypatch, {"email": "doc@example.com", "role": "admin"})
     db.row_factory = dict_row
     assert auth.decode("any", db).role == "clinician"
 
 
 def test_operator_lists_assign_staff_roles(people, db, monkeypatch):
-    monkeypatch.setenv("AUTH_MODE", "identity-platform")
     monkeypatch.setenv("CLINICIAN_EMAILS", "new.doc@example.com, p2@example.com")
     monkeypatch.setenv("ADMIN_EMAILS", "boss@example.com")
     db.row_factory = dict_row
 
-    def sign_in(email):
-        monkeypatch.setattr(
-            auth, "_verify_identity_platform", lambda t: {"email": email, "email_verified": True}
-        )
+    def role_of(email):
+        _sign_in_as(monkeypatch, {"email": email})
         return auth.decode("any", db).role
 
-    assert sign_in("New.Doc@example.com") == "clinician"  # first sign-in
-    assert sign_in("p2@example.com") == "clinician"  # existing patient promoted by the list
-    assert sign_in("boss@example.com") == "admin"
-    assert sign_in("someone@example.com") == "patient"
+    assert role_of("New.Doc@example.com") == "clinician"  # first sign-in
+    assert role_of("p2@example.com") == "clinician"  # existing patient promoted by the list
+    assert role_of("boss@example.com") == "admin"
+    assert role_of("someone@example.com") == "patient"
+
+
+# Real signature checks with a locally generated key standing in for the tenant's keys
+
+TENANT = "11111111-2222-3333-4444-555555555555"
+CLIENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+@pytest.fixture
+def tenant_key(monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    class Keys:
+        def get_signing_key_from_jwt(self, token):
+            return type("Key", (), {"key": private.public_key()})
+
+    monkeypatch.setenv("ENTRA_TENANT_ID", TENANT)
+    monkeypatch.setenv("ENTRA_TENANT_SUBDOMAIN", "clinicdemo")
+    monkeypatch.setenv("ENTRA_CLIENT_ID", CLIENT)
+    monkeypatch.setattr(auth, "_jwks_client", Keys())
+    return private
+
+
+def _entra_token(private, **overrides):
+    claims = {
+        "iss": f"https://{TENANT}.ciamlogin.com/{TENANT}/v2.0",
+        "aud": CLIENT,
+        "exp": int(time.time()) + 300,
+        "email": "p1@example.com",
+    } | overrides
+    return jwt.encode(claims, private, algorithm="RS256")
+
+
+def test_entra_token_with_correct_issuer_and_audience_is_accepted(tenant_key):
+    assert auth._verify_entra(_entra_token(tenant_key))["email"] == "p1@example.com"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"aud": "someone-elses-app"}, {"iss": "https://evil.example.com/v2.0"}, {"exp": 1}],
+    ids=["wrong-audience", "wrong-issuer", "expired"],
+)
+def test_entra_token_checks_audience_issuer_and_expiry(tenant_key, overrides):
+    with pytest.raises(jwt.PyJWTError):
+        auth._verify_entra(_entra_token(tenant_key, **overrides))
+
+
+def test_entra_token_signed_by_another_key_is_rejected(tenant_key):
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    with pytest.raises(jwt.PyJWTError):
+        auth._verify_entra(_entra_token(other))

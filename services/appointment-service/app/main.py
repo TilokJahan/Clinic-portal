@@ -47,8 +47,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
 
-# The frontend on Azure Static Web Apps calls the API on another origin. List the allowed
-# origins (comma separated) in CORS_ALLOWED_ORIGINS; empty means same-origin only (compose/nginx).
+# Only needed if the frontend is ever served from another origin (compose, kind and AKS are all
+# same-origin through nginx). List allowed origins, comma separated, in CORS_ALLOWED_ORIGINS.
 _origins = [o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 if _origins:
     app.add_middleware(

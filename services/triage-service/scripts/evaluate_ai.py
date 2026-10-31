@@ -1,10 +1,11 @@
-"""Run the 15 synthetic cases in tests/cases.json through the real Gemini model.
+"""Run the 15 synthetic cases in tests/cases.json through the real Azure OpenAI model.
 
-Needs Vertex AI access: GCP_PROJECT_ID set and `gcloud auth application-default login`.
-Each case goes through the same path as production: redact, then Gemini, then validation.
+Needs `az login` (an account with the "Cognitive Services OpenAI User" role) and the endpoint
+from `terraform output`. Each case goes through the same path as production: redact, then the
+model, then validation.
 
     cd services/triage-service
-    GCP_PROJECT_ID=your-project python scripts/evaluate_gemini.py
+    AZURE_OPENAI_ENDPOINT=https://<name>.openai.azure.com/ python scripts/evaluate_ai.py
 
 Prints one line per case and a summary. An "urgent" case scored lower is the failure that
 matters most (see docs/triage.md), so it is reported separately. Costs a few cents.
@@ -16,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.gemini_client import GeminiTriageClient  # noqa: E402
+from app.ai_client import AITriageClient  # noqa: E402
 from app.redaction import redact  # noqa: E402
 
 ORDER = {"routine": 0, "soon": 1, "urgent": 2}
@@ -24,7 +25,7 @@ ORDER = {"routine": 0, "soon": 1, "urgent": 2}
 
 def main() -> int:
     cases = json.loads((Path(__file__).parent.parent / "tests" / "cases.json").read_text("utf-8"))
-    client = GeminiTriageClient.from_env()
+    client = AITriageClient.from_env()
     correct = under_triaged = fallbacks = tokens = 0
     for case in cases:
         reply = client.triage(redact(case["symptoms"]).text)

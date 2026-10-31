@@ -43,7 +43,7 @@ export const httpApi: Api = {
   getQueue: () => request('/queue'),
   subscribeQueue(onQueue, onStatus) {
     // EventSource can't send headers, so the token goes in the URL (only for this endpoint).
-    // On error we reconnect with a fresh token, since Identity Platform tokens expire hourly.
+    // On error we reconnect with a fresh token, since Entra ID tokens expire after about an hour.
     let source: EventSource | null = null
     let closed = false
     let retry: ReturnType<typeof setTimeout> | undefined

@@ -9,23 +9,15 @@ variable "prefix" {
   }
 }
 
-# --- Azure -------------------------------------------------------------------------------------
-
 variable "azure_subscription_id" {
-  description = "Azure subscription that hosts the shared resources (docs/cloud-accounts.md)."
+  description = "Azure subscription that hosts everything (docs/cloud-accounts.md)."
   type        = string
 }
 
-variable "azure_location" {
-  description = "Azure region for AKS, ACR and Key Vault."
+variable "location" {
+  description = "Azure region. Azure for Students only allows a few (ours: canadacentral, francecentral, belgiumcentral, denmarkeast, mexicocentral)."
   type        = string
-  default     = "eastus"
-}
-
-variable "static_web_app_location" {
-  description = "Static Web Apps is only offered in a few regions."
-  type        = string
-  default     = "eastus2"
+  default     = "canadacentral"
 }
 
 variable "aks_node_size" {
@@ -34,39 +26,56 @@ variable "aks_node_size" {
   default     = "Standard_B2s"
 }
 
+variable "postgres_sku" {
+  description = "Azure Database for PostgreSQL Flexible Server size. B1ms (burstable) is enough for the demo."
+  type        = string
+  default     = "B_Standard_B1ms"
+}
+
+variable "openai_model" {
+  description = "Azure OpenAI model for triage."
+  type = object({
+    name     = string
+    version  = string
+    sku      = string
+    capacity = number # thousands of tokens per minute
+  })
+  default = {
+    name     = "gpt-4o-mini"
+    version  = "2024-07-18"
+    sku      = "GlobalStandard"
+    capacity = 10
+  }
+}
+
 variable "dns_label" {
-  description = "DNS label for the API: <dns_label>.<azure_location>.cloudapp.azure.com. Must be unique in the region."
+  description = "DNS label for the app: <dns_label>.<location>.cloudapp.azure.com. Must be unique in the region."
   type        = string
 }
 
-# --- Google Cloud ------------------------------------------------------------------------------
+# --- Sign-in (Microsoft Entra External ID) -----------------------------------------------------
+# The external tenant, its sign-up/sign-in user flow and the app registration are created once in
+# the Entra admin center (steps in infra/README.md); paste their IDs here.
 
-variable "gcp_project_id" {
-  description = "Google Cloud project for Cloud SQL, Vertex AI and Identity Platform."
+variable "entra_tenant_id" {
+  description = "Directory (tenant) ID of the Entra External ID tenant."
   type        = string
 }
 
-variable "gcp_region" {
-  description = "Region for Cloud SQL and Vertex AI."
-  type        = string
-  default     = "us-central1"
-}
-
-variable "gcp_billing_account" {
-  description = "Billing account ID (XXXXXX-XXXXXX-XXXXXX) for the budget alert."
+variable "entra_tenant_subdomain" {
+  description = "The tenant's subdomain, as in <subdomain>.ciamlogin.com."
   type        = string
 }
 
-variable "cloud_sql_tier" {
-  description = "Smallest shared-core tier is enough for the demo."
+variable "entra_client_id" {
+  description = "Application (client) ID of the frontend's app registration in the external tenant."
   type        = string
-  default     = "db-f1-micro"
 }
 
 # --- People and money --------------------------------------------------------------------------
 
 variable "budget_amount_usd" {
-  description = "Monthly budget per cloud. Alerts at 25%, 50%, 80% and 100%."
+  description = "Monthly budget. Alerts at 25%, 50%, 80% and 100%."
   type        = number
   default     = 50
 }
@@ -77,18 +86,16 @@ variable "budget_alert_emails" {
 }
 
 variable "clinician_emails" {
-  description = "Emails that get the clinician role when they sign in with Identity Platform."
+  description = "Emails that get the clinician role when they sign in."
   type        = list(string)
   default     = []
 }
 
 variable "admin_emails" {
-  description = "Emails that get the admin role when they sign in with Identity Platform."
+  description = "Emails that get the admin role when they sign in."
   type        = list(string)
   default     = []
 }
-
-# --- GitHub ------------------------------------------------------------------------------------
 
 variable "github_repository" {
   description = "owner/name of the repository whose main branch may deploy (OIDC, no secrets)."
