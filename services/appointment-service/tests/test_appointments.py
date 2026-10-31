@@ -142,3 +142,28 @@ def test_patient_id_in_the_body_is_ignored(client, data):
 
 def test_book_rejects_invalid_body(client):
     assert client.post("/appointments", json={}, headers=as_user(1)).status_code == 422
+
+
+def test_ready_checks_the_database(client):
+    assert client.get("/ready").json() == {"status": "ready"}
+
+
+def test_cors_allows_only_listed_origins(monkeypatch):
+    import importlib
+
+    from fastapi.testclient import TestClient
+
+    import app.main
+
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://clinic.example.org")
+    module = importlib.reload(app.main)
+    try:
+        cors = TestClient(module.app)
+        preflight = {"Access-Control-Request-Method": "GET"}
+        ok = cors.options("/slots", headers={"Origin": "https://clinic.example.org", **preflight})
+        assert ok.headers["access-control-allow-origin"] == "https://clinic.example.org"
+        bad = cors.options("/slots", headers={"Origin": "https://evil.example.com", **preflight})
+        assert "access-control-allow-origin" not in bad.headers
+    finally:
+        monkeypatch.delenv("CORS_ALLOWED_ORIGINS")
+        importlib.reload(app.main)

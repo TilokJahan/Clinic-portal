@@ -1,0 +1,55 @@
+# HTTPS for the API on a free Azure DNS name (<DNS_LABEL>.<region>.cloudapp.azure.com).
+# The AKS application routing add-on runs this nginx controller; cert-manager gets a
+# Let's Encrypt certificate (installed by the deploy workflow).
+apiVersion: approuting.kubernetes.azure.com/v1alpha1
+kind: NginxIngressController
+metadata:
+  name: clinic-nginx
+spec:
+  ingressClassName: clinic-nginx
+  controllerNamePrefix: clinic-nginx
+  loadBalancerAnnotations:
+    service.beta.kubernetes.io/azure-dns-label-name: from-cloud-env
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: clinic-nginx
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    # Server-Sent Events: keep the connection open and unbuffered
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    # /metrics stays inside the cluster
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location = /metrics { return 404; }
+spec:
+  ingressClassName: clinic-nginx
+  tls:
+    - hosts: [from-cloud-env]
+      secretName: api-tls
+  rules:
+    - host: from-cloud-env
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: appointment-service
+                port:
+                  name: http
