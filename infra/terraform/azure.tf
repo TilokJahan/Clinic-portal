@@ -48,6 +48,10 @@ resource "azurerm_subnet" "postgres" {
       actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
   }
+
+  lifecycle {
+    ignore_changes = [service_endpoints] # Azure adds Microsoft.Storage itself for PostgreSQL
+  }
 }
 
 resource "azurerm_private_dns_zone" "postgres" {
@@ -154,6 +158,11 @@ resource "azurerm_kubernetes_cluster" "aks" {
     node_count      = 1
     os_disk_size_gb = 64
     vnet_subnet_id  = azurerm_subnet.aks.id
+
+    # Azure's default; one extra node during upgrades fits our vCPU quota
+    upgrade_settings {
+      max_surge = "10%"
+    }
   }
 
   identity {
@@ -232,6 +241,19 @@ resource "azurerm_key_vault_secret" "database_url" {
   depends_on = [azurerm_role_assignment.kv_terraform]
 }
 
+# Signs the demo sign-in tokens (AUTH_MODE=dev). Generated here, only ever stored in Key Vault.
+resource "random_password" "auth_dev_secret" {
+  length  = 48
+  special = false
+}
+
+resource "azurerm_key_vault_secret" "auth_dev_secret" {
+  name         = "auth-dev-secret"
+  key_vault_id = azurerm_key_vault.kv.id
+  value        = random_password.auth_dev_secret.result
+  depends_on   = [azurerm_role_assignment.kv_terraform]
+}
+
 # --- Identity the pods use (federated with their Kubernetes service accounts) -------------------
 
 resource "azurerm_user_assigned_identity" "workload" {
@@ -295,18 +317,23 @@ resource "azurerm_consumption_budget_resource_group" "monthly" {
   }
 }
 
-# --- GitHub Actions deploy identity (OIDC, no secrets) -----------------------------------------
+# --- GitHub Actions deploy identity (OIDC, no secrets), optional ------------------------------
+# Off by default: the WMICH tenant lets us create app registrations but not federated credentials.
+# Without it, deploy from a laptop with infra/scripts/deploy.sh (same steps as deploy.yml).
 
 resource "azuread_application" "github" {
+  count        = var.enable_github_deploy_identity ? 1 : 0
   display_name = "github-${var.prefix}-deploy"
 }
 
 resource "azuread_service_principal" "github" {
-  client_id = azuread_application.github.client_id
+  count     = var.enable_github_deploy_identity ? 1 : 0
+  client_id = azuread_application.github[0].client_id
 }
 
 resource "azuread_application_federated_identity_credential" "github_main" {
-  application_id = azuread_application.github.id
+  count          = var.enable_github_deploy_identity ? 1 : 0
+  application_id = azuread_application.github[0].id
   display_name   = "main-branch"
   audiences      = ["api://AzureADTokenExchange"]
   issuer         = "https://token.actions.githubusercontent.com"
@@ -314,11 +341,11 @@ resource "azuread_application_federated_identity_credential" "github_main" {
 }
 
 resource "azurerm_role_assignment" "github" {
-  for_each = {
+  for_each = var.enable_github_deploy_identity ? {
     acr_push = { scope = azurerm_container_registry.acr.id, role = "AcrPush" }
     aks_user = { scope = azurerm_kubernetes_cluster.aks.id, role = "Azure Kubernetes Service Cluster User Role" }
-  }
+  } : {}
   scope                = each.value.scope
   role_definition_name = each.value.role
-  principal_id         = azuread_service_principal.github.object_id
+  principal_id         = azuread_service_principal.github[0].object_id
 }

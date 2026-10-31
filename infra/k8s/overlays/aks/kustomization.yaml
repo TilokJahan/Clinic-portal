@@ -24,7 +24,6 @@ configMapGenerator:
   - name: clinic-config
     behavior: merge
     literals:
-      - AUTH_MODE=entra-external-id
       - TRIAGE_CLIENT=azure-openai
     envs:
       - cloud.env

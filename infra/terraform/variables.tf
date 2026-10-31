@@ -21,9 +21,9 @@ variable "location" {
 }
 
 variable "aks_node_size" {
-  description = "VM size of the single AKS node. B-series keeps student credits going."
+  description = "VM size of the single AKS node. Our Azure for Students subscription only has vCPU quota for B-series v2, and AKS only accepts the ARM ones there (B2ps_v2: 2 vCPU, 8 GB). Images are built for arm64 and amd64."
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_B2ps_v2"
 }
 
 variable "postgres_sku" {
@@ -59,23 +59,38 @@ variable "dns_label" {
   type        = string
 }
 
-# --- Sign-in (Microsoft Entra External ID) -----------------------------------------------------
-# The external tenant, its sign-up/sign-in user flow and the app registration are created once in
-# the Entra admin center (steps in infra/README.md); paste their IDs here.
+# --- Sign-in -------------------------------------------------------------------------------------
+# "dev": the synthetic demo accounts (what we run: our university tenant blocks both an External ID
+# tenant (region policy) and user consent to apps). "entra-external-id": real sign-up/sign-in;
+# fill in the three entra_* values from an External ID tenant (infra/README.md).
+
+variable "auth_mode" {
+  description = "dev (demo accounts) or entra-external-id."
+  type        = string
+  default     = "dev"
+
+  validation {
+    condition     = contains(["dev", "entra-external-id"], var.auth_mode)
+    error_message = "auth_mode must be dev or entra-external-id."
+  }
+}
 
 variable "entra_tenant_id" {
-  description = "Directory (tenant) ID of the Entra External ID tenant."
+  description = "Directory (tenant) ID of the Entra External ID tenant (entra-external-id only)."
   type        = string
+  default     = ""
 }
 
 variable "entra_tenant_subdomain" {
-  description = "The tenant's subdomain, as in <subdomain>.ciamlogin.com."
+  description = "The tenant's subdomain, as in <subdomain>.ciamlogin.com (entra-external-id only)."
   type        = string
+  default     = ""
 }
 
 variable "entra_client_id" {
-  description = "Application (client) ID of the frontend's app registration in the external tenant."
+  description = "Application (client) ID of the frontend's app registration (entra-external-id only)."
   type        = string
+  default     = ""
 }
 
 # --- People and money --------------------------------------------------------------------------
@@ -101,6 +116,12 @@ variable "admin_emails" {
   description = "Emails that get the admin role when they sign in."
   type        = list(string)
   default     = []
+}
+
+variable "enable_github_deploy_identity" {
+  description = "Create an app registration so GitHub Actions can deploy with OIDC. Our university tenant refuses the federated credential, so it's off and we deploy with infra/scripts/deploy.sh."
+  type        = bool
+  default     = false
 }
 
 variable "github_repository" {

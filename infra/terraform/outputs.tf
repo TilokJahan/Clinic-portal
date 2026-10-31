@@ -4,6 +4,7 @@
 output "cloud_env" {
   description = "Contents for infra/k8s/overlays/aks/cloud.env"
   value = join("\n", [
+    "AUTH_MODE=${var.auth_mode}",
     "AZURE_TENANT_ID=${data.azurerm_client_config.current.tenant_id}",
     "AZURE_WORKLOAD_CLIENT_ID=${azurerm_user_assigned_identity.workload.client_id}",
     "AZURE_KEY_VAULT_NAME=${azurerm_key_vault.kv.name}",
@@ -23,15 +24,16 @@ output "cloud_env" {
 output "github_variables" {
   description = "GitHub Actions variables for .github/workflows/deploy.yml (none are secrets)"
   value = {
-    AZURE_CLIENT_ID       = azuread_application.github.client_id
+    AZURE_CLIENT_ID       = var.enable_github_deploy_identity ? azuread_application.github[0].client_id : ""
     AZURE_TENANT_ID       = data.azurerm_client_config.current.tenant_id
     AZURE_SUBSCRIPTION_ID = var.azure_subscription_id
     AZURE_RESOURCE_GROUP  = azurerm_resource_group.main.name
     AKS_NAME              = azurerm_kubernetes_cluster.aks.name
     ACR_LOGIN_SERVER      = azurerm_container_registry.acr.login_server
     APP_HOST              = local.app_host
+    FRONTEND_AUTH_MODE    = var.auth_mode == "dev" ? "dev" : "entra"
     ENTRA_CLIENT_ID       = var.entra_client_id
-    ENTRA_AUTHORITY       = "https://${var.entra_tenant_subdomain}.ciamlogin.com/"
+    ENTRA_AUTHORITY       = var.entra_tenant_subdomain == "" ? "" : "https://${var.entra_tenant_subdomain}.ciamlogin.com/"
   }
 }
 

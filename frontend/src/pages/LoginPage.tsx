@@ -26,7 +26,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
       : <DemoForm busy={busy} onSubmit={async (email) => { setBusy(true); setError(''); finish(await demoLogin(email)) }} />}
     {error && <ErrorBanner>{error}</ErrorBanner>}
     <div className="login-foot"><ShieldCheck size={14} /> {authMode === 'entra' ? 'Secured by Microsoft Entra ID' : 'Synthetic demo accounts only'}</div>
-    {authMode !== 'entra' && <p className="login-demo">Demo sign-in for local development: no password, synthetic data only.</p>}
+    {authMode !== 'entra' && <p className="login-demo">Demo sign-in with synthetic accounts: no password, no real patient data.</p>}
   </div></div>
 }
 

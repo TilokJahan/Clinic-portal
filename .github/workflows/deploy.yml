@@ -40,19 +40,22 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # The AKS node is ARM (the only size our subscription has quota for); build both
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build and push images
         run: |
           az acr login --name "${ACR%%.*}"
           for s in appointment-service triage-service; do
-            docker build -t "$ACR/$s:$TAG" "services/$s"
+            docker buildx build --platform linux/arm64,linux/amd64 -t "$ACR/$s:$TAG" --push "services/$s"
           done
           # The frontend bakes in the (public) sign-in settings at build time
-          docker build -t "$ACR/frontend:$TAG" \
-            --build-arg VITE_AUTH_MODE=entra \
+          docker buildx build --platform linux/arm64,linux/amd64 -t "$ACR/frontend:$TAG" --push \
+            --build-arg VITE_AUTH_MODE="${{ vars.FRONTEND_AUTH_MODE }}" \
             --build-arg VITE_ENTRA_CLIENT_ID="${{ vars.ENTRA_CLIENT_ID }}" \
             --build-arg VITE_ENTRA_AUTHORITY="${{ vars.ENTRA_AUTHORITY }}" \
             frontend
-          for s in appointment-service triage-service frontend; do docker push "$ACR/$s:$TAG"; done
 
       - name: Connect to AKS and install cert-manager
         run: |
