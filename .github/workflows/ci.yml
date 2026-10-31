@@ -143,6 +143,21 @@ jobs:
         if: failure()
         run: docker compose logs
 
+  terraform:
+    name: terraform (fmt + validate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
   kubernetes:
     name: kubernetes (validate + kind)
     runs-on: ubuntu-latest
@@ -153,7 +168,7 @@ jobs:
         run: |
           mkdir -p rendered
           kubectl kustomize infra/k8s/overlays/local --load-restrictor=LoadRestrictionsNone > rendered/local.yaml
-          kubectl kustomize infra/k8s/overlays/aks > rendered/aks.yaml
+          kubectl kustomize infra/k8s/overlays/aks --load-restrictor=LoadRestrictionsNone > rendered/aks.yaml
           ! grep -n 'from-cloud-env' rendered/aks.yaml   # every placeholder was substituted
           docker run --rm -v "$PWD/rendered:/m" ghcr.io/yannh/kubeconform:v0.6.7 -summary -strict \
             -schema-location default \

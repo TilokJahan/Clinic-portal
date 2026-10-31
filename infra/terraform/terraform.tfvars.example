@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. No secrets here: just IDs and emails.
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+gcp_project_id        = "your-gcp-project"
+gcp_billing_account   = "XXXXXX-XXXXXX-XXXXXX"
+dns_label             = "clinic-portal-yourteam" # unique in the Azure region
+budget_amount_usd     = 50
+budget_alert_emails   = ["member1@example.com", "member2@example.com", "member3@example.com"]
+clinician_emails      = ["clinician.demo@example.com"]
+admin_emails          = []
