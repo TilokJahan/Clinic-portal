@@ -51,6 +51,40 @@ def test_dev_login_does_not_exist_outside_dev_mode(client, people, monkeypatch):
     assert client.post("/auth/dev-login", json={"email": "p1@example.com"}).status_code == 404
 
 
+def test_dev_login_needs_the_passcode_when_one_is_set(client, people, monkeypatch):
+    monkeypatch.setenv("DEMO_PASSCODE", "open-sesame-42")
+    body = {"email": "p1@example.com"}
+    for passcode in (None, "", "wrong", "open-sesame-4", "OPEN-SESAME-42"):
+        payload = body if passcode is None else {**body, "passcode": passcode}
+        response = client.post("/auth/dev-login", json=payload)
+        assert response.status_code == 401, passcode
+        assert response.json() == {"detail": "Wrong or missing demo passcode"}
+
+
+def test_dev_login_works_with_the_right_passcode(client, people, monkeypatch):
+    monkeypatch.setenv("DEMO_PASSCODE", "open-sesame-42")
+    response = client.post(
+        "/auth/dev-login", json={"email": "p1@example.com", "passcode": "open-sesame-42"}
+    )
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == "p1@example.com"
+
+
+def test_wrong_passcode_does_not_reveal_which_accounts_exist(client, people, monkeypatch):
+    monkeypatch.setenv("DEMO_PASSCODE", "open-sesame-42")
+    known = client.post("/auth/dev-login", json={"email": "p1@example.com", "passcode": "x"})
+    unknown = client.post("/auth/dev-login", json={"email": "who@example.com", "passcode": "x"})
+    assert known.status_code == unknown.status_code == 401
+    assert known.json() == unknown.json()
+
+
+def test_no_passcode_is_needed_when_none_is_configured(client, people, monkeypatch):
+    monkeypatch.delenv("DEMO_PASSCODE", raising=False)
+    assert client.post("/auth/dev-login", json={"email": "p1@example.com"}).status_code == 200
+    monkeypatch.setenv("DEMO_PASSCODE", "")  # an empty value (as in .env.example) also means off
+    assert client.post("/auth/dev-login", json={"email": "p1@example.com"}).status_code == 200
+
+
 # --- tokens ---------------------------------------------------------------------------------
 
 
