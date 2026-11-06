@@ -21,6 +21,7 @@ output "cloud_env" {
     "DNS_LABEL=${var.dns_label}",
     "APP_HOST=${local.app_host}",
     "CLINICIAN_EMAILS=${join(",", var.clinician_emails)}",
+    "LAB_TECH_EMAILS=${join(",", var.lab_tech_emails)}",
     "ADMIN_EMAILS=${join(",", var.admin_emails)}",
     "",
   ])
