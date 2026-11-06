@@ -22,10 +22,10 @@ The AI is decision support; a clinician makes every decision.
 
 | Control | Where |
 |---|---|
-| Every endpoint except `/health` needs a signed token; roles `patient`, `clinician`, `admin` | `app/auth.py`, `tests/test_auth.py` |
+| Every endpoint except `/health` needs a signed token; roles `patient`, `clinician`, `lab_tech`, `admin` | `app/auth.py`, `tests/test_auth.py` |
 | Patients only see and act on their own appointments (others get 404, so existence isn't revealed) | `GET /appointments`, `POST /intake` |
 | Cloud sign-in uses Microsoft Entra External ID (email verified at sign-up); tokens are verified against the tenant's keys (signature, issuer, audience, expiry) | `AUTH_MODE=entra-external-id`, tested with real RS256 tokens |
-| A token can never change an existing user's role; staff roles come from operator-controlled `CLINICIAN_EMAILS` / `ADMIN_EMAILS` | `app/auth.py` |
+| A token can never change an existing user's role; staff roles (clinician, lab technician, admin) come from operator-controlled `CLINICIAN_EMAILS` / `LAB_TECH_EMAILS` / `ADMIN_EMAILS` | `app/auth.py` |
 | Demo sign-in (`/auth/dev-login`) exists only when `AUTH_MODE=dev` | tested |
 
 ## Infrastructure

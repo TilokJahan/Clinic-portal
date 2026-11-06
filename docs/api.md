@@ -105,7 +105,8 @@ The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the sa
 | `entra-external-id` | cloud | Sign in with Microsoft Entra External ID (hosted email + password sign-up/sign-in) and send the **ID token**. The backend checks the tenant's signature, issuer and audience (`ENTRA_CLIENT_ID`) and needs an email claim |
 
 - In `entra-external-id` mode a first-time user is created as a `patient`. Emails listed in the
-  operator settings `CLINICIAN_EMAILS` / `ADMIN_EMAILS` get that role when they sign in. A token
+  operator settings `CLINICIAN_EMAILS` / `LAB_TECH_EMAILS` / `ADMIN_EMAILS` get that role when they
+  sign in (an email on several lists gets the most privileged role). A token
   can never change anyone's role.
 - `GET /queue/stream` also accepts the token as `?access_token=...`, because the browser's
   `EventSource` can't send headers. Only that endpoint should use it.

@@ -1,7 +1,8 @@
 # Database Schema (v1)
 
 Source of truth: [`services/appointment-service/db/schema.sql`](../services/appointment-service/db/schema.sql)
-and the migration [`schemav2_lab_results.sql`](../services/appointment-service/db/schemav2_lab_results.sql) (lab reports).
+and the migrations [`schemav2_lab_results.sql`](../services/appointment-service/db/schemav2_lab_results.sql) (lab reports)
+and [`schemav3_lab_tech.sql`](../services/appointment-service/db/schemav3_lab_tech.sql) (the `lab_tech` role).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid
@@ -17,7 +18,7 @@ erDiagram
     users {
         bigint id PK
         text email UK
-        text role "patient | clinician | admin"
+        text role "patient | clinician | admin | lab_tech"
         timestamptz created_at
     }
     providers {

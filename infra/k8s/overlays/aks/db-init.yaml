@@ -29,7 +29,8 @@ spec:
                 done
               else
                 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /sql/01-schema.sql \
-                  -f /sql/02-schemav2_lab_results.sql -f /sql/03-seed.sql
+                  -f /sql/02-schemav2_lab_results.sql -f /sql/02-schemav3_lab_tech.sql \
+                  -f /sql/03-seed.sql
                 echo "schema, migrations and seed loaded"
               fi
           env:

@@ -112,6 +112,12 @@ variable "clinician_emails" {
   default     = []
 }
 
+variable "lab_tech_emails" {
+  description = "Emails that get the lab technician role when they sign in."
+  type        = list(string)
+  default     = []
+}
+
 variable "admin_emails" {
   description = "Emails that get the admin role when they sign in."
   type        = list(string)
