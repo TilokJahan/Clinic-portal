@@ -48,6 +48,13 @@ spec:
                   name: clinic-secrets
                   key: AUTH_DEV_SECRET
                   optional: true
+            # Shared demo passcode (Key Vault in Azure). Not set locally: no passcode needed.
+            - name: DEMO_PASSCODE
+              valueFrom:
+                secretKeyRef:
+                  name: clinic-secrets
+                  key: DEMO_PASSCODE
+                  optional: true
           readinessProbe:
             httpGet:
               path: /ready

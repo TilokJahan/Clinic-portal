@@ -40,3 +40,5 @@ Thumbs.db
 tfplan
 *.tfplan
 infra/terraform/*.log
+
+.venv*/

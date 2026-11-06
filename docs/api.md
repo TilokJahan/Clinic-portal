@@ -101,7 +101,7 @@ The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the sa
 
 | Mode | Where | How you get a token |
 |---|---|---|
-| `dev` | local, docker compose, CI | `POST /auth/dev-login` with a seed account's email. Signed with `AUTH_DEV_SECRET`, valid 8 hours. No password: demo data only |
+| `dev` | local, docker compose, CI, the live demo | `POST /auth/dev-login` with a seed account's email (and the shared `passcode` when `DEMO_PASSCODE` is set, as on the live demo). Signed with `AUTH_DEV_SECRET`, valid 8 hours. No per-user password: demo data only |
 | `entra-external-id` | cloud | Sign in with Microsoft Entra External ID (hosted email + password sign-up/sign-in) and send the **ID token**. The backend checks the tenant's signature, issuer and audience (`ENTRA_CLIENT_ID`) and needs an email claim |
 
 - In `entra-external-id` mode a first-time user is created as a `patient`. Emails listed in the
@@ -117,9 +117,12 @@ The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the sa
 
 ### `POST /auth/dev-login` (dev mode only)
 
-Body `{"email": "patient1@example.com"}`. Returns
+Body `{"email": "patient1@example.com", "passcode": "..."}`. `passcode` is optional unless the
+operator set `DEMO_PASSCODE` (the live demo does; local runs and CI don't). Returns
 `{"access_token": "...", "token_type": "bearer", "user": {"id": 1, "email": "...", "role": "patient"}}`.
-401 for an unknown account; 404 when `AUTH_MODE` isn't `dev`.
+401 `Wrong or missing demo passcode` when a passcode is required and doesn't match (checked before
+the account lookup, so it doesn't reveal which emails exist); 401 for an unknown account; 404 when
+`AUTH_MODE` isn't `dev`.
 
 ### `GET /me`
 
