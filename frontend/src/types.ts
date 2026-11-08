@@ -100,7 +100,7 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting'
 
-export type Role = 'patient' | 'clinician' | 'admin'
+export type Role = 'patient' | 'clinician' | 'admin' | 'lab_tech'
 
 export interface User {
   id: number

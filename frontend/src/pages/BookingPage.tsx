@@ -95,5 +95,5 @@ export function BookingPage() {
 }
 
 function Header() {
-  return <div className="welcome-row"><div><div className="eyebrow">CLOUD CLINIC</div><h1>Book an appointment</h1><p>Choose a time for your next visit.</p></div></div>
+  return <div className="welcome-row"><div><h1>Book an appointment</h1><p>Choose a time for your next visit.</p></div></div>
 }
