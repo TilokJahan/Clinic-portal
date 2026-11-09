@@ -6,7 +6,8 @@ INSERT INTO users (email, role) VALUES
     ('patient2@example.com', 'patient'),
     ('patient3@example.com', 'patient'),
     ('clinician1@example.com', 'clinician'),
-    ('admin1@example.com', 'admin');
+    ('admin1@example.com', 'admin'),
+    ('labtech1@example.com', 'lab_tech');
 
 INSERT INTO providers (name, specialty) VALUES
     ('Dr. Alex Example', 'General Practice'),

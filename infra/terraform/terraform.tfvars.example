@@ -11,4 +11,5 @@ entra_client_id        = "00000000-0000-0000-0000-000000000000"
 budget_amount_usd   = 50
 budget_alert_emails = ["member1@example.com", "member2@example.com", "member3@example.com"]
 clinician_emails    = ["clinician.demo@example.com"]
+lab_tech_emails     = []
 admin_emails        = []

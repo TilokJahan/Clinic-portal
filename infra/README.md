@@ -100,7 +100,7 @@ It builds the three images, pushes them to the registry, installs cert-manager, 
 overlay with this deployment's values, loads the database schema and smoke-tests the site. Run
 it again after merging changes. The app is at
 `terraform -chdir=infra/terraform output -raw app_url`. Sign up with your email address; emails
-listed in `clinician_emails` become clinicians when they sign in.
+listed in `clinician_emails` become clinicians, and those in `lab_tech_emails` lab technicians, when they sign in.
 
 **Automatic deploys from GitHub** (`.github/workflows/deploy.yml`) need an app registration
 with a GitHub OIDC credential. Our university tenant refuses that credential, so

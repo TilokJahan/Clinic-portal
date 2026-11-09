@@ -1,8 +1,12 @@
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 import jwt
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from psycopg import errors
 from psycopg.rows import dict_row
 
 from app import auth
@@ -23,6 +27,15 @@ def people(db):
         "(1, '2030-01-08 09:00+00', '2030-01-08 09:30+00')"
     )
     db.execute("INSERT INTO appointments (patient_id, slot_id) VALUES (1, 1)")
+
+
+LAB_TECH_MIGRATION = Path(__file__).resolve().parent.parent / "db" / "schemav3_lab_tech.sql"
+
+
+@pytest.fixture
+def lab_tech(people, db):
+    """Adds lab technician 4 (the people fixture has users 1-3)."""
+    db.execute("INSERT INTO users (email, role) VALUES ('tech@example.com', 'lab_tech')")
 
 
 PATIENT = as_user(1, email="p1@example.com")
@@ -85,6 +98,74 @@ def test_no_passcode_is_needed_when_none_is_configured(client, people, monkeypat
     assert client.post("/auth/dev-login", json={"email": "p1@example.com"}).status_code == 200
 
 
+def test_lab_tech_can_sign_in_with_dev_login(client, lab_tech):
+    response = client.post("/auth/dev-login", json={"email": "tech@example.com"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user"] == {"id": 4, "email": "tech@example.com", "role": "lab_tech"}
+    headers = {"Authorization": f"Bearer {body['access_token']}"}
+    assert client.get("/me", headers=headers).json()["role"] == "lab_tech"
+
+
+# --- the LabTech dependency (used by the lab endpoints that come next) -----------------------
+
+
+def _lab_only_client() -> TestClient:
+    """A tiny app with one lab-tech-only route. Dev tokens are checked without the database."""
+    app = FastAPI()
+
+    @app.get("/lab-only")
+    def lab_only(user: auth.LabTech):
+        return {"role": user.role}
+
+    def no_database():
+        yield None
+
+    app.dependency_overrides[auth.db.get_conn] = no_database
+    return TestClient(app)
+
+
+@pytest.mark.parametrize(
+    ("role", "expected"),
+    [("lab_tech", 200), ("admin", 200), ("clinician", 403), ("patient", 403)],
+)
+def test_lab_tech_routes_allow_lab_techs_and_admins_only(role, expected):
+    headers = as_user(9, role=role, email=f"{role}@example.com")
+    assert _lab_only_client().get("/lab-only", headers=headers).status_code == expected
+
+
+def test_lab_tech_routes_need_a_token():
+    assert _lab_only_client().get("/lab-only").status_code == 401
+
+
+# --- the users.role column and the v3 migration ------------------------------------------------
+
+
+def test_users_accept_lab_tech_but_not_unknown_roles(db):
+    db.execute("INSERT INTO users (email, role) VALUES ('t@example.com', 'lab_tech')")
+    with pytest.raises(errors.CheckViolation):
+        db.execute("INSERT INTO users (email, role) VALUES ('x@example.com', 'janitor')")
+
+
+def _demo_lab_techs(db) -> int:
+    row = db.execute("SELECT count(*) FROM users WHERE email = 'labtech1@example.com'").fetchone()
+    return row[0]
+
+
+def test_migration_adds_the_demo_lab_tech_to_an_existing_database_once(db, people):
+    db.execute(LAB_TECH_MIGRATION.read_text())
+    db.execute(LAB_TECH_MIGRATION.read_text())  # safe to run again
+    assert _demo_lab_techs(db) == 1
+    role = db.execute("SELECT role FROM users WHERE email = 'labtech1@example.com'").fetchone()[0]
+    assert role == "lab_tech"
+
+
+def test_migration_leaves_a_brand_new_database_to_the_seed(db):
+    """With no users yet, the migration adds none, so seed.sql keeps demo ids 1-5 unchanged."""
+    db.execute(LAB_TECH_MIGRATION.read_text())
+    assert _demo_lab_techs(db) == 0
+
+
 # --- tokens ---------------------------------------------------------------------------------
 
 
@@ -135,6 +216,22 @@ def test_patients_cannot_use_clinician_endpoints(client, people, method, path, b
 def test_clinicians_cannot_use_patient_endpoints(client, people, method, path, body):
     kwargs = {"json": body} if body else {}
     assert getattr(client, method)(path, headers=CLINICIAN, **kwargs).status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/queue", None),
+        ("patch", "/triage/1", {"final_urgency": "soon"}),
+        ("post", "/appointments", {"slot_id": 2}),
+        ("get", "/appointments", None),
+        ("post", "/intake", {"appointment_id": 1, "symptoms": "cough"}),
+    ],
+)
+def test_lab_techs_cannot_use_patient_or_clinician_endpoints(client, lab_tech, method, path, body):
+    headers = as_user(4, role="lab_tech", email="tech@example.com")
+    kwargs = {"json": body} if body else {}
+    assert getattr(client, method)(path, headers=headers, **kwargs).status_code == 403
 
 
 def test_everyone_signed_in_can_see_slots(client, people):
@@ -242,6 +339,23 @@ def test_operator_lists_assign_staff_roles(people, db, monkeypatch):
     assert role_of("New.Doc@example.com") == "clinician"  # first sign-in
     assert role_of("p2@example.com") == "clinician"  # existing patient promoted by the list
     assert role_of("boss@example.com") == "admin"
+    assert role_of("someone@example.com") == "patient"
+
+
+def test_lab_tech_list_assigns_the_role_and_admin_and_clinician_outrank_it(people, db, monkeypatch):
+    monkeypatch.setenv("LAB_TECH_EMAILS", "New.Tech@example.com, p2@example.com, doc@example.com")
+    monkeypatch.setenv("CLINICIAN_EMAILS", "doc@example.com")
+    monkeypatch.setenv("ADMIN_EMAILS", "p1@example.com, boss@example.com")
+    db.row_factory = dict_row
+
+    def role_of(email):
+        _sign_in_as(monkeypatch, {"email": email})
+        return auth.decode("any", db).role
+
+    assert role_of("New.Tech@example.com") == "lab_tech"  # first sign-in
+    assert role_of("p2@example.com") == "lab_tech"  # existing patient moved by the list
+    assert role_of("doc@example.com") == "clinician"  # on both lists: clinician wins
+    assert role_of("p1@example.com") == "admin"  # patient on the admin list
     assert role_of("someone@example.com") == "patient"
 
 
