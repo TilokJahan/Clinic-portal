@@ -2,7 +2,8 @@
 
 Source of truth: [`services/appointment-service/db/schema.sql`](../services/appointment-service/db/schema.sql)
 and the migrations [`schemav2_lab_results.sql`](../services/appointment-service/db/schemav2_lab_results.sql) (lab reports)
-and [`schemav3_lab_tech.sql`](../services/appointment-service/db/schemav3_lab_tech.sql) (the `lab_tech` role).
+and [`schemav3_lab_tech.sql`](../services/appointment-service/db/schemav3_lab_tech.sql) (the `lab_tech` role)
+and [`schemav4_lab_uploaded_by.sql`](../services/appointment-service/db/schemav4_lab_uploaded_by.sql) (who uploaded a report).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid
@@ -12,7 +13,7 @@ erDiagram
     providers ||--o{ slots : offers
     slots ||--o{ appointments : "at most one not cancelled"
     appointments ||--o{ triage_results : has
-    appointments ||--o{ lab_reports : "has (uploaded by the patient)"
+    appointments ||--o{ lab_reports : "has (uploaded by the patient or a lab tech)"
     lab_reports ||--o{ lab_results : contains
 
     users {
@@ -67,6 +68,7 @@ erDiagram
         text patient_explanation "draft, then approved text"
         timestamptz explanation_approved_at "NULL = patient sees nothing"
         bigint explanation_approved_by FK
+        bigint uploaded_by FK "patient or lab tech who uploaded it"
         real extraction_confidence
     }
     lab_results {

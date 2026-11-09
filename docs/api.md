@@ -15,7 +15,9 @@ Every change to this file goes through a pull request that all three of us revie
 | GET | `/queue/stream` | appointment | clinician | Server-Sent Events for live updates | done |
 | PATCH | `/triage/{id}` | appointment | clinician | Accept or override the AI result | done |
 | POST | `/appointments/{id}/lab-reports` | appointment | patient | Upload a lab report (PDF/PNG/JPEG) | done |
-| GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results | done |
+| GET | `/lab/worklist?date=YYYY-MM-DD` | appointment | lab_tech / admin | Scheduled visits for the day, with report status | done |
+| POST | `/lab/appointments/{id}/reports` | appointment | lab_tech / admin | Upload a lab report for any scheduled patient | done |
+| GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results (not lab techs) | done |
 | PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
 | GET | `/lab-reports/{id}/file` | appointment | clinician | The original file | done |
 | POST | `/triage` | triage | internal | Redact PII, call AI, return structured result | done |
@@ -254,7 +256,32 @@ See [labs.md](labs.md) for the pipeline and rules.
 - `flag`: `normal`, `low`, `high`, `critical_low`, `critical_high` or `unknown`, from fixed rules.
 - Values are in the canonical unit when the test is recognized (e.g. glucose in mg/dL).
 
-**`GET /appointments/{id}/lab-reports`**: newest first. Clinicians get everything. Patients get
+**`GET /lab/worklist?date=YYYY-MM-DD`** (lab technician or admin): booked and checked-in
+appointments that start on the day (UTC, default today), earliest first. It has what a technician
+needs and nothing clinical: no symptoms, triage results, AI summaries, names or emails.
+
+```json
+[{"appointment_id": 7, "patient_label": "Patient 0007", "starts_at": "2030-01-07T09:00:00Z",
+  "provider_name": "Dr. Alex Example", "status": "booked",
+  "reports": [{"id": 3, "status": "ready", "uploaded_at": "2030-01-07T08:12:00Z",
+               "lab_urgency": "urgent", "reason": "Critical: potassium 6.8 mmol/L"}]}]
+```
+
+**`POST /lab/appointments/{id}/reports`** (lab technician or admin): same `file` field and limits
+as the patient upload, for any patient's appointment. Returns **202** with the `LabReport` in
+status `processing` (the response never contains results). The uploader's id is saved in
+`lab_reports.uploaded_by`, and `lab_uploads_total` is labelled by `role`.
+
+| Status | When |
+|---|---|
+| 202 | Stored, being read |
+| 403 | Not a lab technician or admin |
+| 404 | Unknown appointment |
+| 409 | Appointment is cancelled or completed |
+| 413 / 415 / 422 | Over 10 MB / not a PDF, PNG or JPEG / empty file |
+
+**`GET /appointments/{id}/lab-reports`**: newest first. Lab technicians get **403** (they upload,
+they don't read). Clinicians get everything. Patients get
 only `id`, `status`, dates and `explanation_approved` until a clinician approves; after that also
 `patient_explanation` and `results` (never `reason` or `clinician_summary`).
 
