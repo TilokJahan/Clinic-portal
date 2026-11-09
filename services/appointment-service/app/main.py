@@ -1,4 +1,5 @@
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
@@ -78,9 +79,16 @@ def ready(conn: Conn) -> dict[str, str]:
 
 @app.post("/auth/dev-login")
 def dev_login(conn: Conn, body: DevLogin) -> TokenResponse:
-    """Demo sign-in for the synthetic seed users. Only exists when AUTH_MODE=dev."""
+    """Demo sign-in for the synthetic seed users. Only exists when AUTH_MODE=dev.
+
+    If DEMO_PASSCODE is set (the public demo site), the request must carry it. The check runs
+    before the account lookup, so a wrong passcode never reveals which emails exist.
+    """
     if auth_mode() != "dev":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    expected = os.environ.get("DEMO_PASSCODE", "")
+    if expected and not secrets.compare_digest(body.passcode.encode(), expected.encode()):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong or missing demo passcode")
     row = conn.execute(
         "SELECT id, email, role FROM users WHERE email = %s", (body.email.strip().lower(),)
     ).fetchone()

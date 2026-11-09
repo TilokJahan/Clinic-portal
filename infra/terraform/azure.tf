@@ -296,6 +296,20 @@ resource "azurerm_key_vault_secret" "auth_dev_secret" {
   depends_on   = [azurerm_role_assignment.kv_terraform]
 }
 
+# The demo sign-in (AUTH_MODE=dev) has no passwords, so the public site asks for this shared
+# passcode. Teammates read it in Key Vault (secret "demo-passcode") and share it for demos.
+resource "random_password" "demo_passcode" {
+  length  = 12
+  special = false
+}
+
+resource "azurerm_key_vault_secret" "demo_passcode" {
+  name         = "demo-passcode"
+  key_vault_id = azurerm_key_vault.kv.id
+  value        = random_password.demo_passcode.result
+  depends_on   = [azurerm_role_assignment.kv_terraform]
+}
+
 # --- Identity the pods use (federated with their Kubernetes service accounts) -------------------
 
 resource "azurerm_user_assigned_identity" "workload" {
