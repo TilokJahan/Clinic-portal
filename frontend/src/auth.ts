@@ -40,13 +40,14 @@ async function callApi<T>(path: string, body: unknown, token?: string): Promise<
   }
 }
 
-/** mock and dev modes: sign in as one of the synthetic seed accounts. */
-export async function demoLogin(email: string): Promise<ApiResult<Session>> {
+/** mock and dev modes: sign in as one of the synthetic seed accounts. The passcode is only sent
+ *  to the real backend (dev mode); the public demo site requires it, local runs ignore it. */
+export async function demoLogin(email: string, passcode = ''): Promise<ApiResult<Session>> {
   if (authMode === 'mock') {
     const user = DEMO_ACCOUNTS.find((a) => a.email === email)
     return user ? { ok: true, data: { token: 'mock', user } } : fail(401, 'Unknown demo account')
   }
-  const result = await callApi<{ access_token: string; user: User }>('/auth/dev-login', { email })
+  const result = await callApi<{ access_token: string; user: User }>('/auth/dev-login', { email, passcode })
   return result.ok ? { ok: true, data: { token: result.data.access_token, user: result.data.user } } : result
 }
 

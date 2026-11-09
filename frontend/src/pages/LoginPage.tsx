@@ -23,19 +23,20 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
     <h1>Good to see you.</h1>
     {authMode === 'entra'
       ? <EntraButtons busy={busy} onClick={async (creating) => { setBusy(true); setError(''); finish(await entraLogin(creating)) }} />
-      : <DemoForm busy={busy} onSubmit={async (email) => { setBusy(true); setError(''); finish(await demoLogin(email)) }} />}
+      : <DemoForm busy={busy} onSubmit={async (email, passcode) => { setBusy(true); setError(''); finish(await demoLogin(email, passcode)) }} />}
     {error && <ErrorBanner>{error}</ErrorBanner>}
     <div className="login-foot"><ShieldCheck size={14} /> {authMode === 'entra' ? 'Secured by Microsoft Entra ID' : 'Synthetic demo accounts only'}</div>
-    {authMode !== 'entra' && <p className="login-demo">Demo sign-in with synthetic accounts: no password, no real patient data.</p>}
+    {authMode !== 'entra' && <p className="login-demo">Demo sign-in with synthetic accounts and a shared demo passcode. No real patient data.</p>}
   </div></div>
 }
 
-function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string) => void }) {
+function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string, passcode: string) => void }) {
   const [role, setRole] = useState<Role>('patient')
   const accounts = DEMO_ACCOUNTS.filter((a) => a.role === role)
   const [email, setEmail] = useState(accounts[0].email)
+  const [passcode, setPasscode] = useState('')
   const choose = (next: Role) => { setRole(next); setEmail(DEMO_ACCOUNTS.find((a) => a.role === next)!.email) }
-  return <form onSubmit={(e) => { e.preventDefault(); onSubmit(email) }}>
+  return <form onSubmit={(e) => { e.preventDefault(); onSubmit(email, passcode) }}>
     <p>Choose a demo account to continue.</p>
     <div className="login-role"><span>Continue as</span><div>
       <button type="button" className={role === 'patient' ? 'selected' : ''} onClick={() => choose('patient')}>Patient</button>
@@ -46,6 +47,9 @@ function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string)
         {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
       </select>
     </label>
+    {authMode === 'dev' && <label>Demo passcode
+      <input type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} autoComplete="off" placeholder="Ask the team for the passcode" />
+    </label>}
     <button className="button button-primary login-submit" type="submit" disabled={busy}>{busy ? <Loader2 className="spin" size={16} /> : null} Continue <ArrowRight size={16} /></button>
   </form>
 }

@@ -106,6 +106,8 @@ class QueueLab(BaseModel):
 
 class DevLogin(BaseModel):
     email: str = Field(min_length=3, max_length=254)
+    # Checked against DEMO_PASSCODE when the operator has set one (see app/main.py)
+    passcode: str = Field(default="", max_length=200)
 
 
 class UserOut(BaseModel):
