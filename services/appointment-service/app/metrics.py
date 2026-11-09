@@ -32,7 +32,11 @@ TRIAGE_FALLBACKS = Counter(
 )
 REVIEWS = Counter("triage_reviews_total", "Clinician decisions", ["outcome"])  # accepted/overridden
 STREAM_CLIENTS = Gauge("queue_stream_clients", "Open GET /queue/stream connections")
-LAB_UPLOADS = Counter("lab_uploads_total", "Lab reports uploaded by patients", ["content_type"])
+LAB_UPLOADS = Counter(
+    "lab_uploads_total",
+    "Lab reports uploaded, by file type and uploader role",
+    ["content_type", "role"],
+)
 LAB_PROCESSED = Counter(
     "lab_reports_processed_total", "Lab reports interpreted, by outcome", ["status"]
 )

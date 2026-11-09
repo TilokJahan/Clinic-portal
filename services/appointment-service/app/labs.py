@@ -1,4 +1,5 @@
-"""Lab reports: patients upload, the triage service interprets, clinicians review and approve.
+"""Lab reports: patients or lab technicians upload, the triage service interprets, clinicians
+review and approve.
 
 Flow: POST upload -> file stored (Blob/local) -> row "processing" -> background task sends the
 file to the triage service's /labs/interpret -> results stored, status "ready"/"needs_review" ->
@@ -9,16 +10,26 @@ explanation; until then the patient sees only that the report was received.
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 
 import psycopg
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app import db, metrics
-from app.auth import AnyUser, Clinician, Patient
+from app.auth import Clinician, CurrentUser, LabTech, Patient, require
+from app.queue import patient_label
 from app.storage import LabStore, get_store
 from app.triage import TriageServiceClient, get_triage_client
 
@@ -29,9 +40,12 @@ router = APIRouter()
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
 Store = Annotated[LabStore, Depends(get_store)]
 Triage = Annotated[TriageServiceClient, Depends(get_triage_client)]
+# Who may read lab reports and results. Lab technicians upload; they don't read.
+ReportReader = Annotated[CurrentUser, Depends(require("patient", "clinician", "admin"))]
 
 MAX_BYTES = 10 * 1024 * 1024
 EXTENSIONS = {"application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg"}
+SCHEDULED = ("booked", "checked_in")
 
 
 class LabResult(BaseModel):
@@ -64,6 +78,25 @@ class LabReport(BaseModel):
     explanation_approved_at: datetime | None
     extraction_confidence: float | None = None
     results: list[LabResult] = []
+
+
+class WorklistReport(BaseModel):
+    id: int
+    status: str
+    uploaded_at: datetime
+    lab_urgency: str | None
+    reason: str | None
+
+
+class WorklistEntry(BaseModel):
+    """A scheduled visit for the lab technician. No symptoms, triage or AI summaries."""
+
+    appointment_id: int
+    patient_label: str
+    starts_at: datetime
+    provider_name: str
+    status: str
+    reports: list[WorklistReport]
 
 
 class ExplanationApproval(BaseModel):
@@ -172,25 +205,32 @@ def process_report(
     metrics.LAB_PROCESSING_SECONDS.observe(latency_ms / 1000)
 
 
-@router.post("/appointments/{appointment_id}/lab-reports", status_code=status.HTTP_202_ACCEPTED)
-def upload_lab_report(
-    conn: Conn,
-    user: Patient,
-    store: Store,
-    triage: Triage,
+def _accept_upload(
+    conn: psycopg.Connection,
+    user: CurrentUser,
+    store: LabStore,
+    triage: TriageServiceClient,
     background: BackgroundTasks,
     appointment_id: int,
-    file: Annotated[UploadFile, File(description="PDF, PNG or JPEG, up to 10 MB")],
+    file: UploadFile,
+    *,
+    own_only: bool,
 ) -> LabReport:
-    """Attach a lab report to your appointment. It's read in the background (202)."""
+    """Store an uploaded report and queue it for reading; shared by patients and lab techs.
+
+    own_only: patients may only upload to their own appointment (anything else is a 404, so
+    nobody learns which ids exist) and can't upload to a cancelled one. Lab technicians may
+    upload for any patient, but only while the visit is still scheduled (booked or checked in).
+    """
     appointment = conn.execute(
-        "SELECT status FROM appointments WHERE id = %s AND patient_id = %s",
-        (appointment_id, user.id),
+        "SELECT status, patient_id FROM appointments WHERE id = %s", (appointment_id,)
     ).fetchone()
-    if appointment is None:  # also someone else's appointment: don't reveal it exists
+    if appointment is None or (own_only and appointment["patient_id"] != user.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
     if appointment["status"] == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Appointment is cancelled")
+    if not own_only and appointment["status"] not in SCHEDULED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Appointment is already completed")
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in EXTENSIONS:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Upload a PDF, PNG or JPEG")
@@ -204,21 +244,108 @@ def upload_lab_report(
     store.save(blob_name, content, content_type)
     row = conn.execute(
         f"""
-        INSERT INTO lab_reports AS r (appointment_id, blob_name, content_type, size_bytes)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO lab_reports AS r
+            (appointment_id, blob_name, content_type, size_bytes, uploaded_by)
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING {REPORT_COLUMNS}
         """,
-        (appointment_id, blob_name, content_type, len(content)),
+        (appointment_id, blob_name, content_type, len(content), user.id),
     ).fetchone()
     conn.commit()  # visible to the background task
-    metrics.LAB_UPLOADS.labels(content_type).inc()
+    metrics.LAB_UPLOADS.labels(content_type, user.role).inc()
     background.add_task(process_report, row["id"], content, content_type, triage)
+    # The uploader gets the patient's view: just that the report was received
     return _report(conn, row, for_patient=True)
 
 
+@router.post("/appointments/{appointment_id}/lab-reports", status_code=status.HTTP_202_ACCEPTED)
+def upload_lab_report(
+    conn: Conn,
+    user: Patient,
+    store: Store,
+    triage: Triage,
+    background: BackgroundTasks,
+    appointment_id: int,
+    file: Annotated[UploadFile, File(description="PDF, PNG or JPEG, up to 10 MB")],
+) -> LabReport:
+    """Attach a lab report to your appointment. It's read in the background (202)."""
+    return _accept_upload(
+        conn, user, store, triage, background, appointment_id, file, own_only=True
+    )
+
+
+@router.post("/lab/appointments/{appointment_id}/reports", status_code=status.HTTP_202_ACCEPTED)
+def upload_lab_report_as_tech(
+    conn: Conn,
+    user: LabTech,
+    store: Store,
+    triage: Triage,
+    background: BackgroundTasks,
+    appointment_id: int,
+    file: Annotated[UploadFile, File(description="PDF, PNG or JPEG, up to 10 MB")],
+) -> LabReport:
+    """Lab technicians: attach a report to any scheduled (booked or checked-in) appointment."""
+    return _accept_upload(
+        conn, user, store, triage, background, appointment_id, file, own_only=False
+    )
+
+
+@router.get("/lab/worklist")
+def lab_worklist(
+    conn: Conn,
+    _: LabTech,
+    day: Annotated[date | None, Query(alias="date", description="YYYY-MM-DD (UTC)")] = None,
+) -> list[WorklistEntry]:
+    """Scheduled visits that start on the day (default: today), earliest first.
+
+    Only what a technician needs: who (a label, never a name), when, with whom, and the status
+    of any reports. Symptoms, triage results and AI summaries are not included.
+    """
+    start = datetime.combine(day or datetime.now(UTC).date(), datetime.min.time(), tzinfo=UTC)
+    rows = conn.execute(
+        """
+        SELECT a.id AS appointment_id, a.patient_id, a.status, s.starts_at,
+               p.name AS provider_name
+        FROM appointments a
+        JOIN slots s ON s.id = a.slot_id
+        JOIN providers p ON p.id = s.provider_id
+        WHERE a.status = ANY(%(statuses)s)
+          AND s.starts_at >= %(start)s AND s.starts_at < %(end)s
+        ORDER BY s.starts_at, a.id
+        """,
+        {"statuses": list(SCHEDULED), "start": start, "end": start + timedelta(days=1)},
+    ).fetchall()
+    reports = conn.execute(
+        """
+        SELECT appointment_id, id, status, uploaded_at, lab_urgency, reason
+        FROM lab_reports WHERE appointment_id = ANY(%s) ORDER BY uploaded_at DESC, id DESC
+        """,
+        ([row["appointment_id"] for row in rows],),
+    ).fetchall()
+    by_appointment: dict[int, list[WorklistReport]] = {}
+    for r in reports:
+        by_appointment.setdefault(r["appointment_id"], []).append(
+            WorklistReport(**{k: v for k, v in r.items() if k != "appointment_id"})
+        )
+    return [
+        WorklistEntry(
+            appointment_id=row["appointment_id"],
+            patient_label=patient_label(row["patient_id"]),
+            starts_at=row["starts_at"],
+            provider_name=row["provider_name"],
+            status=row["status"],
+            reports=by_appointment.get(row["appointment_id"], []),
+        )
+        for row in rows
+    ]
+
+
 @router.get("/appointments/{appointment_id}/lab-reports")
-def list_lab_reports(conn: Conn, user: AnyUser, appointment_id: int) -> list[LabReport]:
-    """Patients: their own (results only after approval). Clinicians: everything."""
+def list_lab_reports(conn: Conn, user: ReportReader, appointment_id: int) -> list[LabReport]:
+    """Patients: their own (results only after approval). Clinicians: everything.
+
+    Lab technicians get 403: they upload reports, they don't read them.
+    """
     is_patient = user.role == "patient"
     owner = conn.execute(
         "SELECT patient_id FROM appointments WHERE id = %s", (appointment_id,)

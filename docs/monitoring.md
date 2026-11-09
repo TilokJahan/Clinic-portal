@@ -36,7 +36,7 @@ that honours them (for example Azure Managed Prometheus) picks them up.
 | `redacted_entities_total{entity}` | triage | Requests in which a kind of personal detail was removed |
 | `lab_reports_total{status,urgency}`, `lab_results_total{flag}` | triage | Lab reports by outcome and lab urgency; results by rule flag |
 | `lab_extraction_confidence` | triage | Lowest OCR confidence per report (extraction-accuracy proxy) |
-| `lab_uploads_total`, `lab_reports_processed_total{status}`, `lab_explanations_approved_total` | appointment | Uploads, outcomes (ready / needs_review / failed), clinician approvals |
+| `lab_uploads_total{content_type,role}`, `lab_reports_processed_total{status}`, `lab_explanations_approved_total` | appointment | Uploads, outcomes (ready / needs_review / failed), clinician approvals |
 | `llm_tokens_total` | triage | Tokens used by Azure OpenAI (drives cost) |
 
 ## Privacy rules for metrics
