@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import db, labs, metrics
+from app import db, labs, metrics, reschedule
 from app.auth import (
     AnyUser,
     Clinician,
@@ -35,6 +35,7 @@ from app.models import (
     UserOut,
 )
 from app.queue import TRIAGE_COLUMNS, load_queue, queue_events
+from app.reschedule import load_my_appointments
 from app.triage import TriageServiceClient, get_triage_client
 
 
@@ -48,6 +49,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
 app.include_router(labs.router)
+app.include_router(reschedule.router)
 
 # Only needed if the frontend is ever served from another origin (compose, kind and AKS are all
 # same-origin through nginx). List allowed origins, comma separated, in CORS_ALLOWED_ORIGINS.
@@ -135,20 +137,7 @@ def list_slots(
 @app.get("/appointments")
 def my_appointments(conn: Conn, user: Patient) -> list[MyAppointment]:
     """The signed-in patient's bookings that aren't cancelled, soonest first."""
-    rows = conn.execute(
-        """
-        SELECT a.id, a.slot_id, a.status, a.created_at, s.starts_at,
-               p.name AS provider_name, p.specialty, t.id IS NOT NULL AS intake_submitted
-        FROM appointments a
-        JOIN slots s ON s.id = a.slot_id
-        JOIN providers p ON p.id = s.provider_id
-        LEFT JOIN triage_results t ON t.appointment_id = a.id
-        WHERE a.patient_id = %s AND a.status <> 'cancelled'
-        ORDER BY s.starts_at
-        """,
-        (user.id,),
-    ).fetchall()
-    return [MyAppointment(**row) for row in rows]
+    return load_my_appointments(conn, user.id)
 
 
 @app.post("/appointments", status_code=status.HTTP_201_CREATED)

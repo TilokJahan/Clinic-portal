@@ -19,6 +19,10 @@ Every change to this file goes through a pull request that all three of us revie
 | POST | `/lab/appointments/{id}/reports` | appointment | lab_tech / admin | Upload a lab report for any scheduled patient | done |
 | GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results (not lab techs) | done |
 | PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
+| GET | `/appointments/{id}/earlier-slots` | appointment | clinician | Free earlier slots with the same provider (max 10) | done |
+| POST | `/appointments/{id}/reschedule-offers` | appointment | clinician | Offer the patient an earlier slot | done |
+| POST | `/reschedule-offers/{id}/accept` | appointment | patient (own) | Accept: move to the earlier slot | done |
+| POST | `/reschedule-offers/{id}/decline` | appointment | patient (own) | Decline: keep the booking | done |
 | GET | `/lab-reports/{id}/file` | appointment | clinician | The original file | done |
 | POST | `/triage` | triage | internal | Redact PII, call AI, return structured result | done |
 | POST | `/labs/interpret` | triage | internal | OCR + unit conversion + rule flags + AI summary | done |
@@ -93,9 +97,15 @@ Every change to this file goes through a pull request that all three of us revie
   "starts_at": "2030-01-07T09:00:00Z",
   "status": "booked",
   "booked_at": "2030-01-06T15:02:11Z",
-  "triage": { "...": "TriageRecord, or null before the patient submits an intake" }
+  "triage": { "...": "TriageRecord, or null before the patient submits an intake" },
+  "needs_earlier_visit": false,
+  "offer_pending": false
 }
 ```
+
+- `needs_earlier_visit` is `true` when the urgency is `urgent`, the visit is `booked` and starts
+  more than 24 hours from now, and no earlier visit has been offered yet. It's the cue to offer one.
+- `offer_pending` is `true` while an offered earlier visit waits for the patient's answer.
 
 ## Authentication
 
@@ -164,8 +174,12 @@ The signed-in patient's bookings that aren't cancelled, soonest first:
 ```json
 [{"id": 7, "slot_id": 1, "status": "booked", "created_at": "2030-01-06T15:02:11Z",
   "starts_at": "2030-01-07T09:00:00Z", "provider_name": "Dr. Alex Example",
-  "specialty": "General Practice", "intake_submitted": false}]
+  "specialty": "General Practice", "intake_submitted": false, "pending_offer": null}]
 ```
+
+`pending_offer` is `null`, or an earlier visit the care team has offered:
+`{"id": 4, "slot_id": 12, "starts_at": "2030-01-06T10:00:00Z", "provider_name": "Dr. Alex Example"}`.
+It has no clinical detail, and offers whose slot was taken or has started are not shown.
 
 ### `POST /intake` (patient)
 
@@ -211,6 +225,41 @@ records which clinician decided (`reviewed_by`).
 | 200 | Saved |
 | 404 | Unknown triage id (`{"detail": "Triage result not found"}`) |
 | 422 | `final_urgency` isn't `routine`, `soon` or `urgent` |
+
+### Earlier-visit offers
+
+When a lab result makes a patient urgent but their visit is days away, a clinician can offer an
+earlier slot. Nothing moves until the patient accepts.
+
+**`GET /appointments/{id}/earlier-slots`** (clinician): free, upcoming slots with the same
+provider that start before this visit, earliest first, at most 10 (`Slot[]`). 404 for an unknown
+appointment, 409 if it isn't `booked`.
+
+**`POST /appointments/{id}/reschedule-offers`** (clinician), body
+`{"slot_id": 12, "reason": "optional note for the care team"}`. Returns **201** with
+`{id, appointment_id, proposed_slot_id, provider_name, starts_at, status: "pending", reason,
+created_at}`. The `reason` is never shown to the patient.
+
+| Status | When |
+|---|---|
+| 404 | Unknown appointment or slot |
+| 409 | Appointment isn't booked; the slot has started or is already booked; an offer is already pending |
+| 422 | The slot isn't earlier than the current visit |
+
+**`POST /reschedule-offers/{id}/accept`** (patient, own offers only). In one transaction the
+patient is booked into the new slot, the intake and lab reports move to the new appointment (so
+they stay in the queue), and the old appointment is cancelled. Returns the new `MyAppointment`.
+
+**`POST /reschedule-offers/{id}/decline`** (patient, own offers only). The booking stays as it is.
+Returns `{"id": 4, "status": "declined"}`.
+
+| Status | When |
+|---|---|
+| 404 | Unknown offer, or one that belongs to another patient |
+| 409 | Already answered; or (accept) the slot was just taken or has started, or the original visit was cancelled. A lapsed offer is marked `expired` and can't be used again |
+
+When two patients accept offers for the same slot, the database's unique index on active slots
+lets one through; the other gets 409.
 
 ### Lab reports
 

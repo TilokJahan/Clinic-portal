@@ -94,6 +94,10 @@ class QueueEntry(BaseModel):
     # What the queue sorts by: the higher of symptom and lab urgency, unless a clinician has
     # decided after the latest lab result came in (then their decision)
     urgency: Urgency | None = None
+    # Urgent, booked more than 24 hours from now, and no open offer: offer an earlier visit
+    needs_earlier_visit: bool = False
+    # An earlier visit has been offered and the patient hasn't answered yet
+    offer_pending: bool = False
 
 
 class QueueLab(BaseModel):
@@ -122,6 +126,15 @@ class TokenResponse(BaseModel):
     user: UserOut
 
 
+class PendingOffer(BaseModel):
+    """An earlier visit the care team has offered, as the patient sees it. No clinical detail."""
+
+    id: int
+    slot_id: int
+    starts_at: datetime
+    provider_name: str
+
+
 class MyAppointment(BaseModel):
     """A patient's own booking, as listed by GET /appointments."""
 
@@ -133,3 +146,29 @@ class MyAppointment(BaseModel):
     provider_name: str
     specialty: str
     intake_submitted: bool
+    # An earlier slot the patient can accept or decline; None if there is no open offer
+    pending_offer: PendingOffer | None = None
+
+
+class RescheduleOfferCreate(BaseModel):
+    slot_id: int = Field(gt=0)
+    # For the care team only; never shown to the patient
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class RescheduleOffer(BaseModel):
+    """An offer as the clinician sees it."""
+
+    id: int
+    appointment_id: int
+    proposed_slot_id: int
+    provider_name: str
+    starts_at: datetime
+    status: str
+    reason: str | None
+    created_at: datetime
+
+
+class OfferResult(BaseModel):
+    id: int
+    status: str

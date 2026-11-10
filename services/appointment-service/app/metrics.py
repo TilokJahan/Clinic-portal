@@ -31,6 +31,9 @@ TRIAGE_FALLBACKS = Counter(
     "triage_fallbacks_total", "Intakes stored with the safe fallback instead of an AI answer"
 )
 REVIEWS = Counter("triage_reviews_total", "Clinician decisions", ["outcome"])  # accepted/overridden
+RESCHEDULE_OFFERS = Counter(
+    "reschedule_offers_total", "Earlier-visit offers, by outcome", ["outcome"]
+)  # offered / accepted / declined / expired
 STREAM_CLIENTS = Gauge("queue_stream_clients", "Open GET /queue/stream connections")
 LAB_UPLOADS = Counter(
     "lab_uploads_total",
@@ -59,6 +62,8 @@ for _reason in ("already_booked", "started"):
     BOOKING_CONFLICTS.labels(_reason)
 for _status in ("ready", "needs_review", "failed"):
     LAB_PROCESSED.labels(_status)
+for _outcome in ("offered", "accepted", "declined", "expired"):
+    RESCHEDULE_OFFERS.labels(_outcome)
 
 
 def install(app: FastAPI) -> None:
