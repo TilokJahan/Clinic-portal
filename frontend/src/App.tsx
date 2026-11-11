@@ -5,7 +5,7 @@ import { BillingPage } from './pages/BillingPage'
 import { Dashboard } from './pages/Dashboard'
 import { IntakePage } from './pages/IntakePage'
 import { LoginPage } from './pages/LoginPage'
-import { LabResultsPage } from './pages/LabResultsPage'
+import { LabResultsPage, PatientLabResultsPage } from './pages/LabResultsPage'
 import { PatientHome } from './pages/PatientHome'
 import { QueuePage } from './pages/QueuePage'
 import { ScrollReveal } from './ScrollReveal'
@@ -21,6 +21,7 @@ function App() {
   const { user } = session
   const clinician = user.role === 'clinician' || user.role === 'admin'
   const labTech = user.role === 'lab_tech'
+  const labAccess = labTech || user.role === 'admin'
   const patient = !clinician && !labTech
   const roleLabel = clinician ? 'Clinician' : labTech ? 'Lab Tech' : 'Patient'
   const switchAccount = () => { signOut(); navigate('/login') }
@@ -36,6 +37,7 @@ function App() {
           ? <>
               <NavLink to="/" end><LayoutDashboard size={16} />Overview</NavLink>
               <NavLink to="/queue"><Users size={16} />Patient queue</NavLink>
+              {labAccess && <NavLink to="/lab-results"><FlaskConical size={16} />Upload lab results</NavLink>}
             </>
           : labTech
             ? <>
@@ -59,12 +61,10 @@ function App() {
     </header>
     <main className="main-area">
       <div className="page-content"><ScrollReveal key={location.pathname}><Routes>
-        <Route path="/" element={clinician ? <Dashboard /> : labTech ? <LabResultsPage canUpload={false} overview /> : <PatientHome patientId={user.id} />} />
+        <Route path="/" element={clinician ? <Dashboard /> : labTech ? <LabResultsPage overview /> : <PatientHome patientId={user.id} />} />
         <Route path="/login" element={<LoginPage onLogin={setSession} />} />
         <Route path="/queue" element={clinician ? <QueuePage /> : <Navigate to="/" replace />} />
-        <Route path="/lab-results" element={clinician || labTech || patient
-          ? <LabResultsPage canUpload={labTech} patientId={patient ? user.id : undefined} patientEmail={patient ? user.email : undefined} />
-          : <Navigate to="/" replace />} />
+        <Route path="/lab-results" element={labAccess ? <LabResultsPage /> : patient ? <PatientLabResultsPage /> : <Navigate to="/queue" replace />} />
         <Route path="/book" element={!clinician && !labTech ? <BookingPage /> : <Navigate to="/" replace />} />
         <Route path="/intake" element={!clinician && !labTech ? <IntakePage /> : <Navigate to="/" replace />} />
         <Route path="/billing" element={patient ? <BillingPage patientId={user.id} /> : <Navigate to="/" replace />} />

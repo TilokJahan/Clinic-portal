@@ -72,6 +72,24 @@ export interface LabReport {
   results: LabResult[]
 }
 
+/** Limited report metadata returned to lab technicians; no extracted results or AI summaries. */
+export interface WorklistReport {
+  id: number
+  status: LabStatus
+  uploaded_at: string
+  lab_urgency: Urgency | null
+  reason: string | null
+}
+
+export interface LabWorklistEntry {
+  appointment_id: number
+  patient_label: string
+  starts_at: string
+  provider_name: string
+  status: 'booked' | 'checked_in'
+  reports: WorklistReport[]
+}
+
 export interface QueueLab {
   report_id: number
   status: LabStatus
@@ -131,6 +149,8 @@ export interface Api {
   subscribeQueue(onQueue: (queue: QueueEntry[]) => void, onStatus: (s: StreamStatus) => void): () => void
   review(triageId: number, finalUrgency: Urgency): Promise<ApiResult<TriageRecord>>
   uploadLabReport(appointmentId: number, file: File): Promise<ApiResult<LabReport>>
+  labWorklist(date: string): Promise<ApiResult<LabWorklistEntry[]>>
+  uploadLabReportAsTech(appointmentId: number, file: File): Promise<ApiResult<LabReport>>
   labReports(appointmentId: number): Promise<ApiResult<LabReport[]>>
   approveLabExplanation(reportId: number, text: string): Promise<ApiResult<LabReport>>
   /** The original file (clinicians), for checking extracted values against it */

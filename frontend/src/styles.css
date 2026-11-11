@@ -1514,3 +1514,16 @@ a.patient-footer-item:hover > span > span { color: var(--teal-deep); text-decora
 }
 
 .login-card form > label { color: #395c69; }
+
+.lab-worklist-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.lab-worklist-controls .search-box { margin-left: auto; width: min(360px, 100%); }
+.lab-worklist-reports { display: grid; gap: 10px; margin: 16px 0 0; padding: 14px 0 0; list-style: none; border-top: 1px solid var(--line); }
+.lab-worklist-reports li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--ink-soft); font-size: 12px; }
+.lab-upload-copy .lab-upload-success { color: #226648; font-weight: 600; }
+.lab-upload-panel { margin-bottom: 20px; }
+.patient-lab-visit { margin-bottom: 24px; }
+.patient-lab-visit > h2 { font-size: 17px; }
+@media (max-width: 760px) {
+  .lab-worklist-controls .search-box { width: 100%; margin-left: 0; }
+  .lab-upload-copy { min-width: 0; }
+}

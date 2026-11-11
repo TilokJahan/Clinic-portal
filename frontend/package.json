@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:api": "vite --mode api",
     "build": "tsc -b && vite build",
+    "test:lab": "node --test tests/lab-api.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

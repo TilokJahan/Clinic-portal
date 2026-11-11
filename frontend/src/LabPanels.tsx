@@ -4,9 +4,7 @@ import { api } from './api'
 import { AiLabel, ErrorBanner, UrgencyPill } from './components'
 import { formatDateTime } from './format'
 import type { LabFlag, LabReport, LabResult } from './types'
-
-const ACCEPT = 'application/pdf,image/png,image/jpeg'
-const MAX_BYTES = 10 * 1024 * 1024
+import { LAB_FILE_ACCEPT, labFileError } from './labUpload'
 
 const range = (r: LabResult) =>
   r.ref_low != null && r.ref_high != null ? `${r.ref_low}–${r.ref_high}`
@@ -36,17 +34,27 @@ export function LabReasonChip({ reason, urgency }: { reason: string | null; urge
 
 function useLabReports(appointmentId: number, refreshKey: unknown) {
   const [reports, setReports] = useState<LabReport[] | null>(null)
+  const [error, setError] = useState('')
+  const requestId = useRef(0)
   const load = useCallback(async () => {
+    const current = ++requestId.current
     const result = await api.labReports(appointmentId)
+    if (current !== requestId.current) return
+    setError(result.ok ? '' : result.detail)
     setReports(result.ok ? result.data : [])
   }, [appointmentId])
-  useEffect(() => { void load() }, [load, refreshKey])
-  return { reports, load }
+  useEffect(() => {
+    setReports(null)
+    setError('')
+    void load()
+    return () => { requestId.current++ }
+  }, [load, refreshKey])
+  return { reports, load, error }
 }
 
 /** Patient: upload a lab report for an appointment and see it once a clinician has approved it. */
 export function PatientLabCard({ appointmentId }: { appointmentId: number }) {
-  const { reports, load } = useLabReports(appointmentId, null)
+  const { reports, load, error: reportError } = useLabReports(appointmentId, null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const input = useRef<HTMLInputElement>(null)
@@ -61,8 +69,8 @@ export function PatientLabCard({ appointmentId }: { appointmentId: number }) {
   async function upload(file: File | undefined) {
     if (!file) return
     setError('')
-    if (!ACCEPT.split(',').includes(file.type)) { setError('Please choose a PDF, PNG or JPEG file.'); return }
-    if (file.size > MAX_BYTES) { setError('That file is over 10 MB.'); return }
+    const problem = labFileError(file)
+    if (problem) { setError(problem); return }
     setBusy(true)
     const result = await api.uploadLabReport(appointmentId, file)
     setBusy(false)
@@ -75,10 +83,12 @@ export function PatientLabCard({ appointmentId }: { appointmentId: number }) {
     <div className="lab-card-head"><div className="info-icon mint"><FlaskConical /></div><div><h3>Lab results</h3>
       <p>Have a recent lab report? Attach it (PDF or photo) and your care team will review it with your visit.</p></div></div>
     {reports?.map((r) => <PatientReport key={r.id} report={r} />)}
+    {reports === null && <div className="lab-status"><Loader2 className="spin" size={14} />Loading lab reports…</div>}
+    {reportError && <><ErrorBanner>{reportError}</ErrorBanner><button type="button" className="text-button left" onClick={() => void load()}>Retry loading reports</button></>}
     {error && <ErrorBanner>{error}</ErrorBanner>}
     <label className={`button button-secondary upload-button ${busy ? 'disabled' : ''}`}>
       {busy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />} {busy ? 'Uploading…' : 'Attach a lab report'}
-      <input ref={input} type="file" accept={ACCEPT} hidden disabled={busy} onChange={(e) => upload(e.target.files?.[0])} />
+      <input ref={input} type="file" accept={LAB_FILE_ACCEPT} hidden disabled={busy} onChange={(e) => upload(e.target.files?.[0])} />
     </label>
     <span className="field-hint">Only upload your own synthetic test reports. Max 10 MB.</span>
   </div>
@@ -102,7 +112,8 @@ function PatientReport({ report }: { report: LabReport }) {
 
 /** Clinician (queue drawer): flagged results, summary, original file, approve the explanation. */
 export function ClinicianLabSection({ appointmentId, refreshKey }: { appointmentId: number; refreshKey: unknown }) {
-  const { reports } = useLabReports(appointmentId, refreshKey)
+  const { reports, load, error } = useLabReports(appointmentId, refreshKey)
+  if (error) return <div className="drawer-section"><ErrorBanner>{error}</ErrorBanner><button type="button" className="text-button left" onClick={() => void load()}>Retry loading reports</button></div>
   if (reports === null) return <div className="drawer-section"><Loader2 className="spin" size={14} /> Loading lab reports…</div>
   if (reports.length === 0) return null
   return <>{reports.map((r) => <ClinicianReport key={r.id} report={r} />)}</>

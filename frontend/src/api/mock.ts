@@ -1,5 +1,6 @@
 import { sessionUser } from '../session'
-import type { Api, ApiResult, Appointment, LabReport, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
+import { LAB_FILE_ACCEPT, labFileError } from '../labUpload'
+import type { Api, ApiResult, Appointment, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
 
 // In-memory stand-in for the appointment service, shaped exactly like docs/api.md.
 // Synthetic data only. Used by `npm run dev`; `npm run dev:api` talks to the real backend.
@@ -108,6 +109,43 @@ function patientView(r: LabReport): LabReport {
   return { ...r, clinician_summary: null, reason: null }
 }
 
+async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boolean): Promise<ApiResult<LabReport>> {
+  await pause(500)
+  const user = sessionUser()
+  if (!user) return fail(401, 'Sign in to upload a report')
+  if (ownOnly ? user.role !== 'patient' : !['lab_tech', 'admin'].includes(user.role)) return fail(403, 'Not allowed for your role')
+  const appt = appointments.find((a) => a.id === appointmentId && (!ownOnly || a.patient_id === user.id))
+  if (!appt) return fail(404, 'Appointment not found')
+  if (appt.status === 'cancelled') return fail(409, 'Appointment is cancelled')
+  if (!ownOnly && appt.status !== 'booked' && appt.status !== 'checked_in') return fail(409, 'Appointment is already completed')
+  const problem = labFileError(file)
+  if (problem) return fail(!LAB_FILE_ACCEPT.split(',').includes(file.type) ? 415 : file.size === 0 ? 422 : 413, problem)
+    // The mock "reads" every report as the synthetic critical-potassium example
+    const completed: LabReport = {
+      id: nextId++, appointment_id: appointmentId, content_type: file.type, status: 'ready',
+      uploaded_at: new Date().toISOString(), processed_at: new Date().toISOString(),
+      lab_urgency: 'urgent', reason: 'Critical: potassium 6.8 mmol/L',
+      clinician_summary: 'Potassium critically high at 6.8 mmol/L; creatinine mildly raised. Other results in range.',
+      patient_explanation: 'We checked the salts and kidney markers in your blood. Your potassium was higher than the usual range, and one kidney marker was a little high. Your care team will contact you today about next steps.',
+      explanation_approved: false, explanation_approved_at: null, extraction_confidence: 0.97,
+      results: [
+        { display_name: 'Potassium', test_name: 'Potassium', canonical: 'potassium', value: 6.8, unit: 'mmol/L', ref_low: 3.5, ref_high: 5.1, flag: 'critical_high', confidence: 0.98, needs_verification: false, verification_reason: null },
+        { display_name: 'Creatinine', test_name: 'Creatinine', canonical: 'creatinine', value: 1.9, unit: 'mg/dL', ref_low: 0.6, ref_high: 1.2, flag: 'high', confidence: 0.97, needs_verification: false, verification_reason: null },
+        { display_name: 'Sodium', test_name: 'Sodium', canonical: 'sodium', value: 136, unit: 'mmol/L', ref_low: 135, ref_high: 145, flag: 'normal', confidence: 0.99, needs_verification: false, verification_reason: null },
+      ],
+    }
+  const report: LabReport = { ...completed, status: 'processing', processed_at: null, results: [], lab_urgency: null,
+    reason: null, clinician_summary: null, patient_explanation: null, extraction_confidence: null }
+  labReports.push(report)
+  labFiles.set(report.id, file)
+  setTimeout(() => {
+    Object.assign(report, completed, { processed_at: new Date().toISOString() })
+    notify()
+  }, 800)
+  notify()
+  return ok(patientView(report))
+}
+
 // Seed a few waiting patients for the clinician screens
 ;(function seed() {
   const today = new Date()
@@ -175,39 +213,40 @@ export const mockApi: Api = {
     setTimeout(() => onQueue(queue()), 0)
     return () => { listeners.delete(onQueue) }
   },
-  async uploadLabReport(appointmentId, file) {
-    await pause(500)
-    const appt = appointments.find((a) => a.id === appointmentId && a.patient_id === mockPatientId())
-    if (!appt) return fail(404, 'Appointment not found')
-    if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type)) return fail(415, 'Upload a PDF, PNG or JPEG')
-    if (file.size > 10 * 1024 * 1024) return fail(413, 'The file is over 10 MB')
-    // The mock "reads" every report as the synthetic critical-potassium example
-    const report: LabReport = {
-      id: nextId++, appointment_id: appointmentId, content_type: file.type, status: 'ready',
-      uploaded_at: new Date().toISOString(), processed_at: new Date().toISOString(),
-      lab_urgency: 'urgent', reason: 'Critical: potassium 6.8 mmol/L',
-      clinician_summary: 'Potassium critically high at 6.8 mmol/L; creatinine mildly raised. Other results in range.',
-      patient_explanation: 'We checked the salts and kidney markers in your blood. Your potassium was higher than the usual range, and one kidney marker was a little high. Your care team will contact you today about next steps.',
-      explanation_approved: false, explanation_approved_at: null, extraction_confidence: 0.97,
-      results: [
-        { display_name: 'Potassium', test_name: 'Potassium', canonical: 'potassium', value: 6.8, unit: 'mmol/L', ref_low: 3.5, ref_high: 5.1, flag: 'critical_high', confidence: 0.98, needs_verification: false, verification_reason: null },
-        { display_name: 'Creatinine', test_name: 'Creatinine', canonical: 'creatinine', value: 1.9, unit: 'mg/dL', ref_low: 0.6, ref_high: 1.2, flag: 'high', confidence: 0.97, needs_verification: false, verification_reason: null },
-        { display_name: 'Sodium', test_name: 'Sodium', canonical: 'sodium', value: 136, unit: 'mmol/L', ref_low: 135, ref_high: 145, flag: 'normal', confidence: 0.99, needs_verification: false, verification_reason: null },
-      ],
-    }
-    labReports.push(report)
-    labFiles.set(report.id, file)
-    notify()
-    return ok(patientView(report))
+  uploadLabReport: (appointmentId, file) => acceptLabUpload(appointmentId, file, true),
+  uploadLabReportAsTech: (appointmentId, file) => acceptLabUpload(appointmentId, file, false),
+  async labWorklist(date) {
+    await pause(150)
+    const user = sessionUser()
+    if (!user) return fail(401, 'Sign in to view scheduled visits')
+    if (user.role !== 'lab_tech' && user.role !== 'admin') return fail(403, 'Not allowed for your role')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return fail(422, 'Please choose a valid date.')
+    return ok(appointments
+      .filter((a) => (a.status === 'booked' || a.status === 'checked_in') && slots.get(a.slot_id)!.starts_at.slice(0, 10) === date)
+      .map((a): LabWorklistEntry => {
+        const slot = slots.get(a.slot_id)!
+        return { appointment_id: a.id, patient_label: `Patient ${String(a.patient_id).padStart(4, '0')}`,
+          starts_at: slot.starts_at, provider_name: slot.provider_name, status: a.status as LabWorklistEntry['status'],
+          reports: labReports.filter((r) => r.appointment_id === a.id)
+            .sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at) || b.id - a.id)
+            .map(({ id, status, uploaded_at, lab_urgency, reason }) => ({ id, status, uploaded_at, lab_urgency, reason })) }
+      })
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at) || a.appointment_id - b.appointment_id))
   },
   async labReports(appointmentId) {
     await pause(150)
-    const own = appointments.some((a) => a.id === appointmentId && a.patient_id === mockPatientId())
+    const user = sessionUser()
+    if (!user) return fail(401, 'Sign in to view reports')
+    if (user.role === 'lab_tech') return fail(403, 'Not allowed for your role')
+    const appointment = appointments.find((a) => a.id === appointmentId)
+    if (!appointment || (user.role === 'patient' && appointment.patient_id !== user.id)) return fail(404, 'Appointment not found')
+    const own = user.role === 'patient'
     const reports = labReports.filter((r) => r.appointment_id === appointmentId).reverse()
     return ok(own ? reports.map(patientView) : reports.map((r) => ({ ...r })))
   },
   async approveLabExplanation(reportId, text) {
     await pause(200)
+    if (!['clinician', 'admin'].includes(sessionUser()?.role ?? '')) return fail(403, 'Not allowed for your role')
     const report = labReports.find((r) => r.id === reportId)
     if (!report) return fail(404, 'Lab report not found')
     Object.assign(report, { patient_explanation: text, explanation_approved: true, explanation_approved_at: new Date().toISOString() })
@@ -215,6 +254,7 @@ export const mockApi: Api = {
     return ok({ ...report })
   },
   async labReportFile(reportId) {
+    if (!['clinician', 'admin'].includes(sessionUser()?.role ?? '')) return fail(403, 'Not allowed for your role')
     const file = labFiles.get(reportId)
     return file ? ok(file) : fail(404, 'Lab report not found')
   },
