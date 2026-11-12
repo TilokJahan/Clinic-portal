@@ -96,6 +96,11 @@ export const httpApi: Api = {
     if (providerId) params.set('provider_id', String(providerId))
     return request(`/slots/earliest?${params}`)
   },
+  nextAvailable(afterHours, providerId) {
+    const params = new URLSearchParams({ after_hours: String(afterHours) })
+    if (providerId) params.set('provider_id', String(providerId))
+    return request(`/slots/next-available?${params}`)
+  },
   scheduleOptions(appointmentId, withinHours) {
     const params = withinHours ? `?${new URLSearchParams({ within_hours: String(withinHours) })}` : ''
     return request(`/appointments/${appointmentId}/schedule-options${params}`)

@@ -37,7 +37,7 @@ const MATRIX: UrgencyMatrix = {
     { urgency: 'urgent', seen_within_hours: 24, seen_within: 'Within 24 hours',
       symptom_signals: ['A red-flag rule matches: chest pain or pressure, trouble breathing, stroke signs, fainting, severe bleeding, allergic swelling, worst-ever headache, or self-harm risk', 'The AI judges the symptoms urgent', 'The AI’s safety filter refused the message (treated as urgent until a clinician reads it)'],
       lab_signals: ['Any critical value (critical low or critical high)'],
-      action: 'Top of the queue. The patient sees an emergency notice and can only choose a visit within 24 hours; a clinician can offer an earlier slot.' },
+      action: 'Top of the queue. The patient sees an emergency notice and can only choose a visit within 24 hours, including the slots kept free for urgent care; a clinician can offer an earlier slot.' },
     { urgency: 'soon', seen_within_hours: 72, seen_within: 'Within 3 days',
       symptom_signals: ['The AI judges the symptoms new, worsening or needing a check this week', 'The AI could not be reached (safe default until a clinician reviews)'],
       lab_signals: ['Any value outside the reference range (low or high)', 'A report that could not be read'],
@@ -51,7 +51,8 @@ const MATRIX: UrgencyMatrix = {
     'The priority is the higher of the symptom priority and the lab priority (see the grid).',
     'Fixed rules decide red flags and critical lab values. The AI can raise a priority but never lower one set by a rule.',
     'A clinician reviews every AI suggestion. A clinician’s decision made after the latest lab result is final.',
-    'Patients choose when to come within the time allowed for their priority, never later. Nothing is moved until the patient accepts.',
+    'Patients choose when to come within the time allowed for their priority, never later. Nothing is moved until the patient accepts. If nothing is free in time, they can still take any time earlier than their current visit, and the clinician queue flags them.',
+    'Each provider keeps the last slot of the day free for urgent patients. If no urgent patient needs it, it opens to everyone 2 hours before it starts.',
   ],
   timeframes: [
     { hours: 24, label: 'Within 24 hours' }, { hours: 72, label: 'Within 3 days' },
@@ -61,18 +62,31 @@ const MATRIX: UrgencyMatrix = {
 const limitFor = (u: Urgency | null) => MATRIX.levels.find((l) => l.urgency === u)?.seen_within_hours ?? 336
 const limitMessage = (hours: number) =>
   `Your care team needs to see you ${MATRIX.timeframes.find((t) => t.hours === hours)!.label.toLowerCase()}. Please choose an earlier time.`
+// The urgent reserve (app/urgency.py): the last slot of each day, opening to everyone 2 hours before
+const reservedSlots = new Set<number>()
+const RESERVED_MESSAGE = 'That time is kept free for urgent care. Please pick another.'
+const reserveClosed = (s: Slot) => reservedSlots.has(s.id) && Date.parse(s.starts_at) > Date.now() + 2 * 3_600_000
+const view = (s: Slot): Slot => ({ ...s, reserved: reserveClosed(s) })
 const isActive = (slotId: number) => takenByOthers.has(slotId) || appointments.some((a) => a.slot_id === slotId && a.status !== 'cancelled')
 
-/** Free, upcoming slots starting within the next `hours`, earliest first. */
-function freeSlotsWithin(hours: number, providerId?: number, limit = 12): Slot[] {
-  const now = Date.now(), end = now + hours * 3_600_000
+/** Free, upcoming slots starting after `afterHours` and within `hours`, earliest first. Only urgent
+ * patients (and clinicians) see the urgent reserve. */
+function freeSlotsWithin(hours: number, providerId?: number, limit = 12, urgent = false, afterHours = 0): Slot[] {
+  const now = Date.now(), start = now + afterHours * 3_600_000, end = now + hours * 3_600_000
   const days = new Set<string>()
   for (let t = now; t <= end + 86_400_000; t += 86_400_000) days.add(new Date(t).toISOString().slice(0, 10))
   return [...days].flatMap(slotsFor)
-    .filter((s) => { const at = Date.parse(s.starts_at); return at > now && at <= end && !isActive(s.id) && (!providerId || s.provider_id === providerId) })
+    .filter((s) => { const at = Date.parse(s.starts_at); return at > start && at <= end && !isActive(s.id) && (urgent || !reserveClosed(s)) && (!providerId || s.provider_id === providerId) })
     .sort((x, y) => x.starts_at.localeCompare(y.starts_at) || x.provider_id - y.provider_id)
     .slice(0, limit)
+    .map(view)
 }
+
+/** The first free time after `afterHours` (the mock schedule goes 4 weeks ahead). */
+const nextFree = (afterHours: number, providerId?: number, urgent = false) =>
+  freeSlotsWithin(28 * 24, providerId, 1, urgent, afterHours)[0] ?? null
+
+const LATEST_VISIT_HOURS: Partial<Record<Urgency, number>> = { urgent: 24, soon: 72 }
 
 /** An offer the patient can still act on: pending, slot not started and still free. */
 const liveOffer = (appointmentId: number) => offers.find((o) => o.appointment_id === appointmentId && o.status === 'pending'
@@ -106,6 +120,7 @@ function slotsFor(date: string): Slot[] {
         })
         slotByKey.set(key, id)
         if (p.id === 1 && i === 0) takenByOthers.add(id)
+        if (i === 5) reservedSlots.add(id)
       }
       result.push(slots.get(id)!)
     }
@@ -152,7 +167,8 @@ function queue(): QueueEntry[] {
       const highest = candidates.sort((x, y) => ORDER[x] - ORDER[y])[0] ?? null
       const urgency = decidedAfterLab ? t!.final_urgency : highest
       const offerPending = Boolean(liveOffer(e.appointment_id))
-      const needsEarlier = e.status === 'booked' && urgency === 'urgent' && !offerPending && Date.parse(e.starts_at) > Date.now() + 86_400_000
+      const latest = urgency ? LATEST_VISIT_HOURS[urgency] : undefined
+      const needsEarlier = e.status === 'booked' && latest !== undefined && !offerPending && Date.parse(e.starts_at) > Date.now() + latest * 3_600_000
       return { ...e, lab, urgency, needs_earlier_visit: needsEarlier, offer_pending: offerPending }
     })
     .sort((x, y) => {
@@ -245,7 +261,7 @@ export const mockApi: Api = {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail(422, 'Please choose a valid date.')
     const now = Date.now()
     const booked = new Set(appointments.filter((a) => a.status !== 'cancelled').map((a) => a.slot_id))
-    return ok(slotsFor(date).filter((s) => !booked.has(s.id) && Date.parse(s.starts_at) > now && (!providerId || s.provider_id === providerId)))
+    return ok(slotsFor(date).filter((s) => !booked.has(s.id) && !takenByOthers.has(s.id) && !reserveClosed(s) && Date.parse(s.starts_at) > now && (!providerId || s.provider_id === providerId)).map(view))
   },
   async book(slotId) {
     await pause(400)
@@ -255,6 +271,7 @@ export const mockApi: Api = {
     if (Date.parse(slot.starts_at) <= Date.now()) return fail(409, 'Slot has already started')
     if (takenByOthers.has(slotId) || appointments.some((a) => a.slot_id === slotId && a.status !== 'cancelled'))
       return fail(409, 'Slot is already booked')
+    if (reserveClosed(slot)) return fail(409, RESERVED_MESSAGE)
     const appt: Appointment = { id: nextId++, patient_id: patientId, slot_id: slotId, status: 'booked', created_at: new Date().toISOString() }
     appointments.push(appt)
     notify()
@@ -336,18 +353,26 @@ export const mockApi: Api = {
     if (!MATRIX.timeframes.some((t) => t.hours === withinHours)) return fail(422, 'within_hours must be one of 24, 72, 168, 336')
     return ok(freeSlotsWithin(withinHours, providerId))
   },
+  async nextAvailable(afterHours, providerId) {
+    await pause(150)
+    if (!MATRIX.timeframes.some((t) => t.hours === afterHours)) return fail(422, 'after_hours must be one of 24, 72, 168, 336')
+    return ok(nextFree(afterHours, providerId))
+  },
   async scheduleOptions(appointmentId, withinHours) {
     await pause(200)
     const appt = appointments.find((a) => a.id === appointmentId && a.patient_id === mockPatientId())
     if (!appt) return fail(404, 'Appointment not found')
     if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
     const priority = triage.find((x) => x.appointment_id === appointmentId)?.urgency ?? null
-    const limit = limitFor(queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null)
+    const effective = queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null
+    const limit = limitFor(effective), urgent = effective === 'urgent'
     const within = withinHours ?? limit
     if (within > limit) return fail(422, limitMessage(limit))
     const startsAt = slots.get(appt.slot_id)!.starts_at
+    const free = freeSlotsWithin(within, undefined, 12, urgent)
     return ok({ appointment_id: appointmentId, starts_at: startsAt, priority, max_within_hours: limit, care_team_limit: limit < limitFor(priority),
-      within_hours: within, current_fits: Date.parse(startsAt) <= Date.now() + within * 3_600_000, slots: freeSlotsWithin(within) })
+      within_hours: within, current_fits: Date.parse(startsAt) <= Date.now() + within * 3_600_000, slots: free,
+      next_available: free.length ? null : nextFree(within, undefined, urgent) })
   },
   async reschedule(appointmentId, slotId) {
     await pause(400)
@@ -357,8 +382,11 @@ export const mockApi: Api = {
     const slot = slots.get(slotId)
     if (!slot) return fail(404, 'Slot not found')
     if (Date.parse(slot.starts_at) <= Date.now()) return fail(409, 'Slot has already started')
-    const limit = limitFor(queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null)
-    if (Date.parse(slot.starts_at) > Date.now() + limit * 3_600_000) return fail(422, limitMessage(limit))
+    const effective = queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null
+    const limit = limitFor(effective)
+    // Within the limit, or at least earlier than the current visit
+    if (Date.parse(slot.starts_at) > Date.now() + limit * 3_600_000 && slot.starts_at >= slots.get(appt.slot_id)!.starts_at) return fail(422, limitMessage(limit))
+    if (reserveClosed(slot) && effective !== 'urgent') return fail(409, RESERVED_MESSAGE)
     if (isActive(slotId)) return fail(409, 'Slot is already booked')
     const moved = moveBooking(appt, slotId)
     notify()
@@ -370,7 +398,7 @@ export const mockApi: Api = {
     if (!appt) return fail(404, 'Appointment not found')
     if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
     const current = slots.get(appt.slot_id)!
-    return ok(freeSlotsWithin(14 * 24, current.provider_id, 50).filter((s) => s.starts_at < current.starts_at).slice(0, 10))
+    return ok(freeSlotsWithin(14 * 24, current.provider_id, 50, true).filter((s) => s.starts_at < current.starts_at).slice(0, 10))
   },
   async offerEarlierVisit(appointmentId, slotId) {
     await pause(300)

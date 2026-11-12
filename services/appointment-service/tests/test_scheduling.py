@@ -3,7 +3,7 @@
 import pytest
 
 from app import metrics, urgency
-from tests.conftest import as_user
+from tests.conftest import DB_DIR, as_user
 
 PATIENT = as_user(1)
 OTHER = as_user(2)
@@ -69,6 +69,12 @@ def _move(client, slot, appointment=APPOINTMENT, headers=PATIENT):
     return client.post(
         f"/appointments/{appointment}/reschedule", json={"slot_id": slot}, headers=headers
     )
+
+
+def _take(db, *slot_ids):
+    """Patient 2 books these slots, so they aren't free any more."""
+    for slot in slot_ids:
+        db.execute("INSERT INTO appointments (patient_id, slot_id) VALUES (2, %s)", (slot,))
 
 
 def _ids(slots):
@@ -199,12 +205,20 @@ def test_accepting_a_time_moves_the_visit_with_the_intake_and_labs(client, world
     assert [e["appointment_id"] for e in queue] == [new["id"]]
 
 
-def test_a_time_later_than_the_priority_allows_is_refused(client, world):
+def test_a_time_later_than_the_priority_and_the_current_visit_is_refused(client, world):
     _triage(world, "urgent")
-    response = _move(client, IN_30H)
+    response = _move(client, IN_10D)
     assert response.status_code == 422
     assert "within 24 hours" in response.json()["detail"]
     assert _move(client, IN_2H).status_code == 200
+
+
+def test_an_earlier_time_past_the_limit_is_allowed(client, world):
+    # Nothing free in 24 hours: 30 hours away still beats the current visit in 5 days
+    _triage(world, "urgent")
+    _take(world, IN_2H, DR_TWO_IN_3H)
+    response = _move(client, IN_30H)
+    assert response.status_code == 200 and response.json()["slot_id"] == IN_30H
 
 
 def test_moving_to_a_later_time_is_fine_within_the_limit(client, world):
@@ -258,3 +272,141 @@ def test_moves_are_counted(client, world):
     before = metrics.PATIENT_RESCHEDULES._value.get()
     _move(client, IN_2H)
     assert metrics.PATIENT_RESCHEDULES._value.get() == before + 1
+
+
+# --- when nothing is free in time ---------------------------------------------------------------
+
+
+def test_an_empty_timeframe_offers_the_next_free_time(client, world):
+    _triage(world, "urgent")
+    _take(world, IN_2H, DR_TWO_IN_3H)
+    body = _options(client).json()
+    assert body["slots"] == [] and body["next_available"]["id"] == IN_30H
+
+
+def test_next_available_is_only_sent_when_the_timeframe_is_empty(client, world):
+    assert _options(client, within=24).json()["next_available"] is None
+
+
+def test_next_available_is_null_when_nothing_is_free(client, world):
+    world.execute(
+        "DELETE FROM slots s WHERE NOT EXISTS (SELECT 1 FROM appointments a WHERE a.slot_id = s.id)"
+    )
+    body = _options(client, within=24).json()
+    assert body["slots"] == [] and body["next_available"] is None
+
+
+def test_booking_can_ask_for_the_first_time_after_a_timeframe(client, world):
+    def nxt(hours, **params):
+        response = client.get(
+            "/slots/next-available", params={"after_hours": hours, **params}, headers=PATIENT
+        )
+        return response.json()
+
+    assert nxt(24)["id"] == IN_30H
+    assert nxt(168)["id"] == IN_10D
+    assert nxt(24, provider_id=2) is None
+    response = client.get("/slots/next-available", params={"after_hours": 5}, headers=PATIENT)
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(("ai", "flagged"), [("urgent", True), ("soon", True), ("routine", False)])
+def test_the_queue_flags_visits_later_than_the_priority_allows(client, world, ai, flagged):
+    _triage(world, ai)  # the visit is 5 days away
+    entry = client.get("/queue", headers=CLINICIAN).json()[0]
+    assert entry["needs_earlier_visit"] is flagged
+
+
+def test_a_soon_visit_inside_three_days_is_not_flagged(client, world):
+    _triage(world, "soon")
+    assert _move(client, IN_30H).status_code == 200
+    assert client.get("/queue", headers=CLINICIAN).json()[0]["needs_earlier_visit"] is False
+
+
+# --- the urgent reserve -------------------------------------------------------------------------
+
+
+def _reserve(db, slot):
+    db.execute("UPDATE slots SET reserved_for_urgent = true WHERE id = %s", (slot,))
+
+
+def test_ordinary_booking_never_sees_or_takes_the_reserve(client, world):
+    _reserve(world, IN_30H)
+    day = world.execute("SELECT (now() + interval '30 hours')::date").fetchone()[0]
+    listed = client.get("/slots", params={"date": str(day)}, headers=OTHER).json()
+    assert IN_30H not in _ids(listed)
+    earliest = client.get("/slots/earliest", params={"within_hours": 72}, headers=OTHER).json()
+    assert IN_30H not in _ids(earliest)
+    response = client.post("/appointments", json={"slot_id": IN_30H}, headers=OTHER)
+    assert response.status_code == 409
+    assert response.json()["detail"] == urgency.RESERVED_MESSAGE
+
+
+def test_a_reserve_nobody_urgent_took_opens_shortly_before_it_starts(client, world):
+    _reserve(world, IN_2H)  # starts in under 2 hours by now
+    earliest = client.get("/slots/earliest", params={"within_hours": 24}, headers=OTHER).json()
+    assert earliest[0]["id"] == IN_2H and earliest[0]["reserved"] is False
+    assert client.post("/appointments", json={"slot_id": IN_2H}, headers=OTHER).status_code == 201
+
+
+@pytest.mark.parametrize("ai", ["soon", "routine"])
+def test_patients_who_are_not_urgent_cannot_use_the_reserve(client, world, ai):
+    _reserve(world, IN_30H)
+    _triage(world, ai)
+    assert IN_30H not in _ids(_options(client, within=72).json()["slots"])
+    response = _move(client, IN_30H)
+    assert response.status_code == 409
+    assert response.json()["detail"] == urgency.RESERVED_MESSAGE
+
+
+def test_an_urgent_patient_gets_the_reserve_when_nothing_else_is_free(client, world):
+    _reserve(world, IN_30H)
+    _triage(world, "urgent")
+    _take(world, IN_2H, DR_TWO_IN_3H)
+    body = _options(client).json()
+    assert body["slots"] == []  # 30 hours is past the 24-hour limit...
+    assert body["next_available"] == {**body["next_available"], "id": IN_30H, "reserved": True}
+    assert _move(client, IN_30H).status_code == 200  # ...but it is the reserve, and it's sooner
+
+
+def test_an_urgent_patient_sees_the_reserve_in_their_timeframe(client, world):
+    world.execute(
+        "INSERT INTO slots (provider_id, starts_at, ends_at, reserved_for_urgent) "
+        "VALUES (1, now() + interval '6 hours', now() + interval '6 hours 30 minutes', true)"
+    )
+    _triage(world, "urgent")
+    slots = _options(client).json()["slots"]
+    assert [s["reserved"] for s in slots] == [False, False, True]
+    assert _move(client, slots[2]["id"]).status_code == 200
+
+
+def test_clinicians_can_offer_the_reserve(client, world):
+    _reserve(world, IN_30H)
+    _lab(world, "urgent")
+    earlier = client.get("/appointments/1/earlier-slots", headers=CLINICIAN).json()
+    assert {"id": IN_30H, "reserved": True}.items() <= next(
+        s for s in earlier if s["id"] == IN_30H
+    ).items()
+    offer = client.post(
+        "/appointments/1/reschedule-offers", json={"slot_id": IN_30H}, headers=CLINICIAN
+    ).json()
+    assert (
+        client.post(f"/reschedule-offers/{offer['id']}/accept", headers=PATIENT).status_code == 200
+    )
+
+
+def test_the_migration_marks_the_reserve_tops_up_slots_and_can_run_twice(client, world):
+    migration = (DB_DIR / "schemav6_urgent_reserve.sql").read_text()
+    world.execute(migration)
+    count = "SELECT count(*), count(*) FILTER (WHERE reserved_for_urgent) FROM slots"
+    after_first = world.execute(count).fetchone()
+    world.execute(migration)
+    assert world.execute(count).fetchone() == after_first
+    total, reserved = after_first
+    weekdays = world.execute(
+        "SELECT count(*) FROM generate_series(current_date + 1, current_date + 14, "
+        "interval '1 day') AS d WHERE extract(isodow FROM d) < 6"
+    ).fetchone()[0]
+    # 2 providers x 6 slots a day were added, one a day each is the reserve; the 8 fixture slots
+    # don't fall on the schedule, so none of them is marked
+    assert total == 8 + 2 * 6 * weekdays and reserved == 2 * weekdays

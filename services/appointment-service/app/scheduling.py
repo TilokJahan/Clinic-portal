@@ -26,13 +26,16 @@ WithinHours = Annotated[
     int | None, Query(description="One of the timeframes in GET /urgency-matrix, in hours")
 ]
 
-# Free, upcoming slots that start before a cutoff, earliest first
-_FREE_SLOTS_SQL = """
-    SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at
+# Free, upcoming slots that start after one cutoff and (if given) before another, earliest first
+_FREE_SLOTS_SQL = f"""
+    SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at,
+           NOT {urgency.OPEN_TO_ALL} AS reserved
     FROM slots s
     JOIN providers p ON p.id = s.provider_id
     LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
-    WHERE a.id IS NULL AND s.starts_at > now() AND s.starts_at <= now() + %(within)s
+    WHERE a.id IS NULL AND s.starts_at > now() + %(after)s
+      AND (%(urgent)s OR {urgency.OPEN_TO_ALL})
+      AND (%(within)s::interval IS NULL OR s.starts_at <= now() + %(within)s)
       AND (%(provider_id)s::bigint IS NULL OR s.provider_id = %(provider_id)s)
     ORDER BY s.starts_at, s.provider_id
     LIMIT %(limit)s
@@ -64,13 +67,44 @@ def _check_timeframe(within_hours: int) -> None:
 
 
 def _free_slots(
-    conn: psycopg.Connection, within_hours: int, provider_id: int | None = None, limit: int = 12
+    conn: psycopg.Connection,
+    within_hours: int,
+    provider_id: int | None = None,
+    limit: int = 12,
+    urgent: bool = False,
 ) -> list[Slot]:
+    """Free times in the next within_hours. Only urgent patients see the urgent reserve."""
     rows = conn.execute(
         _FREE_SLOTS_SQL,
-        {"within": timedelta(hours=within_hours), "provider_id": provider_id, "limit": limit},
+        {
+            "urgent": urgent,
+            "after": timedelta(0),
+            "within": timedelta(hours=within_hours),
+            "provider_id": provider_id,
+            "limit": limit,
+        },
     ).fetchall()
     return [Slot(**row) for row in rows]
+
+
+def _next_free_slot(
+    conn: psycopg.Connection,
+    after_hours: int,
+    provider_id: int | None = None,
+    urgent: bool = False,
+) -> Slot | None:
+    """The first free time after the next after_hours, however far away."""
+    row = conn.execute(
+        _FREE_SLOTS_SQL,
+        {
+            "urgent": urgent,
+            "after": timedelta(hours=after_hours),
+            "within": None,
+            "provider_id": provider_id,
+            "limit": 1,
+        },
+    ).fetchone()
+    return Slot(**row) if row else None
 
 
 def _own_appointment(
@@ -110,6 +144,18 @@ def earliest_slots(
     return _free_slots(conn, within_hours, provider_id)
 
 
+@router.get("/slots/next-available")
+def next_available(
+    conn: Conn,
+    _: AnyUser,
+    after_hours: Annotated[int, Query(description="One of the timeframes, in hours")],
+    provider_id: Annotated[int | None, Query(gt=0)] = None,
+) -> Slot | None:
+    """The first free time after a timeframe, for when nothing is free inside it. null if none."""
+    _check_timeframe(after_hours)
+    return _next_free_slot(conn, after_hours, provider_id)
+
+
 @router.get("/appointments/{appointment_id}/schedule-options")
 def schedule_options(
     conn: Conn, user: Patient, appointment_id: int, within_hours: WithinHours = None
@@ -125,6 +171,8 @@ def schedule_options(
     _check_timeframe(within)
     if within > limit:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _limit_message(limit))
+    urgent = row["effective"] == "urgent"
+    slots = _free_slots(conn, within, urgent=urgent)
     return ScheduleOptions(
         appointment_id=appointment_id,
         starts_at=row["starts_at"],
@@ -133,7 +181,8 @@ def schedule_options(
         care_team_limit=limit < urgency.max_within_hours(row["priority"]),
         within_hours=within,
         current_fits=row["starts_at"] <= datetime.now(UTC) + timedelta(hours=within),
-        slots=_free_slots(conn, within),
+        slots=slots,
+        next_available=None if slots else _next_free_slot(conn, within, urgent=urgent),
     )
 
 
@@ -143,24 +192,29 @@ def reschedule(
 ) -> MyAppointment:
     """The patient accepts a new time for this visit. Their intake and lab reports move with it.
 
-    The new time must start within the longest timeframe their priority allows.
+    The new time must start within the longest timeframe their priority allows, or at least be
+    earlier than the current visit: when nothing is free in time, coming sooner is still safer.
     """
     with conn.transaction():
         row = _own_appointment(conn, user.id, appointment_id, lock=True)
         limit = urgency.max_within_hours(row["effective"])
         slot = conn.execute(
-            """
-            SELECT starts_at > now() AS upcoming, starts_at <= now() + %s AS within_limit
-            FROM slots WHERE id = %s
+            f"""
+            SELECT s.starts_at > now() AS upcoming,
+                   s.starts_at <= now() + %s OR s.starts_at < %s AS allowed,
+                   {urgency.OPEN_TO_ALL} AS open
+            FROM slots s WHERE s.id = %s
             """,
-            (timedelta(hours=limit), body.slot_id),
+            (timedelta(hours=limit), row["starts_at"], body.slot_id),
         ).fetchone()
         if slot is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
         if not slot["upcoming"]:
             raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
-        if not slot["within_limit"]:
+        if not slot["allowed"]:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _limit_message(limit))
+        if not slot["open"] and row["effective"] != "urgent":
+            raise HTTPException(status.HTTP_409_CONFLICT, urgency.RESERVED_MESSAGE)
         try:
             new_id = move_booking(conn, user.id, appointment_id, body.slot_id)
         except errors.UniqueViolation as exc:

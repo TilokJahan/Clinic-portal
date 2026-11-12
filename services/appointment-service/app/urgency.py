@@ -13,6 +13,17 @@ SEEN_WITHIN_HOURS = {Urgency.URGENT: 24, Urgency.SOON: 72, Urgency.ROUTINE: 14 *
 # Before an intake there is no priority yet, so any timeframe is allowed
 NO_PRIORITY_HOURS = 14 * 24
 
+# The urgent reserve: each provider keeps the last slot of the day free for urgent patients
+# (marked in the database by schemav6_urgent_reserve.sql). Ordinary booking can't take it. If no
+# urgent patient has taken it this close to its start, it opens to everyone, so it isn't wasted.
+RESERVE_OPENS_HOURS = 2
+# SQL for a slot "s" that anyone may book: not reserved, or a reserve that has opened
+OPEN_TO_ALL = (
+    f"(NOT s.reserved_for_urgent OR s.starts_at <= now() + interval '{RESERVE_OPENS_HOURS} hours')"
+)
+
+RESERVED_MESSAGE = "That time is kept free for urgent care. Please pick another."
+
 TIMEFRAMES = [
     Timeframe(hours=24, label="Within 24 hours"),
     Timeframe(hours=72, label="Within 3 days"),
@@ -35,7 +46,8 @@ LEVELS = [
         ],
         lab_signals=["Any critical value (critical low or critical high)"],
         action="Top of the queue. The patient sees an emergency notice and can only choose a "
-        "visit within 24 hours; a clinician can offer an earlier slot.",
+        "visit within 24 hours, including the slots kept free for urgent care; a clinician can "
+        "offer an earlier slot.",
     ),
     UrgencyLevel(
         urgency=Urgency.SOON,
@@ -68,7 +80,10 @@ RULES = [
     "A clinician reviews every AI suggestion. A clinician's decision made after the latest lab "
     "result is final.",
     "Patients choose when to come within the time allowed for their priority, never later. "
-    "Nothing is moved until the patient accepts.",
+    "Nothing is moved until the patient accepts. If nothing is free in time, they can still take "
+    "any time earlier than their current visit, and the clinician queue flags them.",
+    f"Each provider keeps the last slot of the day free for urgent patients. If no urgent patient "
+    f"needs it, it opens to everyone {RESERVE_OPENS_HOURS} hours before it starts.",
 ]
 
 

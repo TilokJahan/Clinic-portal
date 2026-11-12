@@ -18,6 +18,8 @@ class Slot(BaseModel):
     specialty: str
     starts_at: datetime
     ends_at: datetime
+    # Held for urgent patients (the urgent reserve); only listed to urgent patients and clinicians
+    reserved: bool = False
 
 
 class AppointmentCreate(BaseModel):
@@ -94,7 +96,8 @@ class QueueEntry(BaseModel):
     # What the queue sorts by: the higher of symptom and lab urgency, unless a clinician has
     # decided after the latest lab result came in (then their decision)
     urgency: Urgency | None = None
-    # Urgent, booked more than 24 hours from now, and no open offer: offer an earlier visit
+    # Later than the priority allows (urgent: 24 hours, soon: 3 days) and no open offer: offer an
+    # earlier visit or call the patient
     needs_earlier_visit: bool = False
     # An earlier visit has been offered and the patient hasn't answered yet
     offer_pending: bool = False
@@ -211,6 +214,9 @@ class ScheduleOptions(BaseModel):
     # True when the current visit already falls inside the chosen timeframe
     current_fits: bool
     slots: list[Slot]
+    # When nothing is free in the timeframe: the first free time after it, or None if there is
+    # none at all. The patient may take it if it is earlier than their current visit.
+    next_available: Slot | None = None
 
 
 class RescheduleRequest(BaseModel):

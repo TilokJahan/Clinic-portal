@@ -16,11 +16,12 @@ INSERT INTO providers (name, specialty) VALUES
 
 -- 30-minute slots, 14:00-17:00 UTC (9:00-12:00 US Eastern standard time), on weekdays for the next 14 days, for every provider.
 -- Relative to the current date so a fresh database always has bookable future slots.
-INSERT INTO slots (provider_id, starts_at, ends_at)
-SELECT p.id, s.starts_at, s.starts_at + interval '30 minutes'
+-- The last slot of each day is the urgent reserve (see schemav6_urgent_reserve.sql).
+INSERT INTO slots (provider_id, starts_at, ends_at, reserved_for_urgent)
+SELECT p.id, s.starts_at, s.starts_at + interval '30 minutes', s.n = 5
 FROM providers p
 CROSS JOIN LATERAL (
-    SELECT (d + interval '14 hours' + n * interval '30 minutes') AT TIME ZONE 'UTC' AS starts_at
+    SELECT (d + interval '14 hours' + n * interval '30 minutes') AT TIME ZONE 'UTC' AS starts_at, n
     FROM generate_series(
         (current_date + 1)::timestamp, (current_date + 14)::timestamp, interval '1 day'
     ) AS d

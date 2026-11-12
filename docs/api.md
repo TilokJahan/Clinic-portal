@@ -26,6 +26,7 @@ Every change to this file goes through a pull request that all three of us revie
 | GET | `/lab-reports/{id}/file` | appointment | clinician | The original file | done |
 | GET | `/urgency-matrix` | appointment | any signed-in user | How a priority is decided and how soon it is seen | done |
 | GET | `/slots/earliest?within_hours=72` | appointment | any signed-in user | Free times in a timeframe, earliest first (max 12) | done |
+| GET | `/slots/next-available?after_hours=72` | appointment | any signed-in user | First free time after a timeframe, or null | done |
 | GET | `/appointments/{id}/schedule-options` | appointment | patient (own) | Times this visit can move to, within a timeframe | done |
 | POST | `/appointments/{id}/reschedule` | appointment | patient (own) | Accept a new time; intake and labs move with it | done |
 | POST | `/triage` | triage | internal | Redact PII, call AI, return structured result | done |
@@ -54,8 +55,12 @@ Every change to this file goes through a pull request that all three of us revie
 
 ```json
 {"id": 1, "provider_id": 1, "provider_name": "Dr. Alex Example", "specialty": "General Practice",
- "starts_at": "2030-01-07T09:00:00Z", "ends_at": "2030-01-07T09:30:00Z"}
+ "starts_at": "2030-01-07T09:00:00Z", "ends_at": "2030-01-07T09:30:00Z", "reserved": false}
 ```
+
+`reserved` is `true` for a slot in the urgent reserve that hasn't opened yet. Only urgent patients
+(schedule options) and clinicians (earlier slots) are ever shown one; see
+[triage.md](triage.md#urgent-reserve).
 
 **Appointment**
 
@@ -107,8 +112,10 @@ Every change to this file goes through a pull request that all three of us revie
 }
 ```
 
-- `needs_earlier_visit` is `true` when the urgency is `urgent`, the visit is `booked` and starts
-  more than 24 hours from now, and no earlier visit has been offered yet. It's the cue to offer one.
+- `needs_earlier_visit` is `true` when the visit is `booked` and later than its urgency allows
+  (`urgent`: more than 24 hours away, `soon`: more than 3 days), and no earlier visit has been
+  offered yet. It's the cue to offer one or call the patient, for example when nothing was free in
+  time.
 - `offer_pending` is `true` while an offered earlier visit waits for the patient's answer.
 
 ## Authentication
@@ -278,7 +285,11 @@ intake there is no priority and any timeframe is allowed. Timeframes are 24, 72,
 **`GET /slots/earliest?within_hours=72&provider_id=1`** (any signed-in user): free, upcoming
 `Slot[]` that start in the next `within_hours`, earliest first, at most 12. Used to book by
 timeframe: the frontend proposes the first one and the patient accepts it or picks another. 422 if
-`within_hours` isn't one of the timeframes.
+`within_hours` isn't one of the timeframes. The urgent reserve is left out until it opens.
+
+**`GET /slots/next-available?after_hours=72&provider_id=1`** (any signed-in user): the first free
+`Slot` after the timeframe, however far away, or `null` if there is none. Shown when nothing is
+free inside the timeframe, so booking is never a dead end.
 
 **`GET /appointments/{id}/schedule-options?within_hours=72`** (patient, own booked visit):
 
@@ -296,6 +307,9 @@ timeframe: the frontend proposes the first one and the patient accepts it or pic
 - Without `within_hours`, the longest allowed timeframe is used. A longer one is a 422 with
   `"Your care team needs to see you within 24 hours. Please choose an earlier time."`
 - `current_fits` is `true` when the current visit already falls inside the timeframe.
+- `next_available` is set only when `slots` is empty: the first free time after the timeframe,
+  or `null` if there is none at all.
+- Urgent patients also see the urgent reserve (`"reserved": true`); others never do.
 
 **`POST /appointments/{id}/reschedule`** (patient, own), body `{"slot_id": 12}`. In one
 transaction (the same one that accepts an offer) the patient is booked into the new slot, the
@@ -305,8 +319,11 @@ old appointment is cancelled. Returns the new `MyAppointment`.
 | Status | When |
 |---|---|
 | 404 | Unknown appointment (or someone else's), or unknown slot |
-| 409 | The visit isn't `booked`; the slot has started or is already booked (including your own) |
-| 422 | The slot starts later than the priority allows |
+| 409 | The visit isn't `booked`; the slot has started or is already booked (including your own); the slot is in the urgent reserve and the patient isn't urgent |
+| 422 | The slot is later than the priority allows **and** not earlier than the current visit. A time past the limit that is still sooner than the current visit is accepted: when nothing is free in time, coming sooner is safer |
+
+`POST /appointments` also answers 409 `"That time is kept free for urgent care. Please pick
+another."` for a reserved slot that hasn't opened.
 
 ### Lab reports
 

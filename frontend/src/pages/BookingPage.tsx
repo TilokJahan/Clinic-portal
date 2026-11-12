@@ -4,7 +4,7 @@ import { ArrowRight, CalendarDays, Check, Loader2, ShieldCheck } from 'lucide-re
 import { api } from '../api'
 import { ErrorBanner } from '../components'
 import { formatDateTime, formatTime, nextWeekday, timeZoneName, todayInput } from '../format'
-import { SlotChoices, TimeframeChips } from '../Scheduling'
+import { CLINIC_PHONE, SlotChoices, TimeframeChips } from '../Scheduling'
 import type { Appointment, Slot, Timeframe } from '../types'
 
 type Mode = 'timeframe' | 'day'
@@ -17,6 +17,8 @@ export function BookingPage() {
   const [providerId, setProviderId] = useState(0)
   const [slots, setSlots] = useState<Slot[] | null>(null)
   const [chosen, setChosen] = useState<Slot | null>(null)
+  // By timeframe, when nothing is free inside it: the first free time after it
+  const [next, setNext] = useState<Slot | null>(null)
   const [booking, setBooking] = useState(false)
   const [error, setError] = useState('')
   const [booked, setBooked] = useState<{ appointment: Appointment; slot: Slot } | null>(null)
@@ -25,11 +27,18 @@ export function BookingPage() {
 
   const load = useCallback(async () => {
     setSlots(null)
+    setNext(null)
     const result = mode === 'timeframe' ? await api.earliestSlots(within) : await api.getSlots(date)
     if (result.ok) {
       setSlots(result.data)
       // By timeframe, the earliest time is proposed; the patient accepts it or picks another
-      if (mode === 'timeframe') setChosen(result.data.find((s) => !providerId || s.provider_id === providerId) ?? null)
+      if (mode === 'timeframe') {
+        const first = result.data.find((s) => !providerId || s.provider_id === providerId) ?? null
+        const later = first ? null : await api.nextAvailable(within, providerId || undefined)
+        const fallback = later?.ok ? later.data : null
+        setNext(fallback)
+        setChosen(first ?? fallback)
+      }
     } else { setSlots([]); setError(result.detail) }
   }, [mode, within, date, providerId])
 
@@ -105,7 +114,14 @@ export function BookingPage() {
       {slots === null
         ? <div className="empty-state"><Loader2 className="spin" size={18} /> Loading available times…</div>
         : visible.length === 0
-          ? <div className="empty-state">{mode === 'timeframe' ? 'No free times in this timeframe. Try a longer one.' : 'No free times on this day. Try another date.'}</div>
+          ? mode === 'timeframe'
+            ? <div className="nothing-in-time">
+                <p className="field-hint">No free times in this timeframe.</p>
+                {next
+                  ? <><span className="drawer-label">EARLIEST AVAILABLE</span><SlotChoices slots={[next]} chosen={chosen} onChoose={setChosen} /></>
+                  : <p className="field-hint">There are no free times at all right now. Please call the clinic at <a href={CLINIC_PHONE.href}>{CLINIC_PHONE.label}</a>.</p>}
+              </div>
+            : <div className="empty-state">No free times on this day. Try another date.</div>
           : mode === 'timeframe'
             ? <SlotChoices slots={visible} chosen={chosen} onChoose={setChosen} />
             : <div className="slot-grid">{visible.map((slot) =>

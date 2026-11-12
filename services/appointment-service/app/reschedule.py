@@ -21,6 +21,7 @@ from app.models import (
     RescheduleOfferCreate,
     Slot,
 )
+from app.urgency import OPEN_TO_ALL
 
 router = APIRouter()
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
@@ -99,11 +100,15 @@ def _booked_appointment(conn: psycopg.Connection, appointment_id: int) -> dict:
 
 @router.get("/appointments/{appointment_id}/earlier-slots")
 def earlier_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
-    """Free, upcoming slots with the same provider that start before this visit (at most 10)."""
+    """Free, upcoming slots with the same provider that start before this visit (at most 10).
+
+    Includes the urgent reserve: offering it to an urgent patient is what it is for.
+    """
     current = _booked_appointment(conn, appointment_id)
     rows = conn.execute(
-        """
-        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at
+        f"""
+        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at,
+               NOT {OPEN_TO_ALL} AS reserved
         FROM slots s
         JOIN providers p ON p.id = s.provider_id
         LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'

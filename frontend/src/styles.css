@@ -1581,3 +1581,11 @@ a.patient-footer-item:hover > span > span { color: var(--teal-deep); text-decora
   .matrix-grid { font-size: 11px; }
   .matrix-grid th, .matrix-grid td { padding: 6px 4px; }
 }
+.slot-option.reserved { border-style: dashed; }
+.reserve-tag { color: #cd6d5b; font-weight: 700; }
+.nothing-in-time { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.nothing-in-time p { margin: 0; }
+.nothing-in-time .slot-grid { margin-bottom: 0; }
+.urgent-help { display: flex; flex-direction: column; gap: 6px; padding: 14px; color: #a76253; background: #fff7f4; border: 1px solid #f4e5de; border-radius: 9px; font-size: 13px; line-height: 1.55; }
+.urgent-help a, .schedule-warning a, .nothing-in-time a { color: #0876b9; font-weight: 700; }
+.schedule-warning { padding: 12px; color: #8a6a32; background: #fff7e8; border-radius: 8px; font-size: 13px; line-height: 1.55; }

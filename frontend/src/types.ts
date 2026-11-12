@@ -11,6 +11,8 @@ export interface Slot {
   specialty: string
   starts_at: string
   ends_at: string
+  /** Kept free for urgent patients (shown only to them and to clinicians) */
+  reserved?: boolean
 }
 
 export interface Appointment {
@@ -110,7 +112,7 @@ export interface QueueEntry {
   lab: QueueLab | null
   /** The higher of symptom and lab urgency, unless a clinician decided after the lab came in */
   urgency: Urgency | null
-  /** Urgent, booked more than 24 hours away, and no open offer: offer an earlier visit */
+  /** Later than the priority allows (urgent: 24 h, soon: 3 days) and no open offer */
   needs_earlier_visit?: boolean
   /** An earlier visit was offered and the patient hasn't answered yet */
   offer_pending?: boolean
@@ -197,6 +199,8 @@ export interface ScheduleOptions {
   /** The current visit is already inside the chosen timeframe */
   current_fits: boolean
   slots: Slot[]
+  /** When nothing is free in the timeframe: the first free time after it (null if none) */
+  next_available?: Slot | null
 }
 
 export interface Api {
@@ -220,6 +224,8 @@ export interface Api {
   urgencyMatrix(): Promise<ApiResult<UrgencyMatrix>>
   /** Free times in the next withinHours, earliest first (booking by timeframe) */
   earliestSlots(withinHours: number, providerId?: number): Promise<ApiResult<Slot[]>>
+  /** The first free time after a timeframe, for when nothing is free inside it (null if none) */
+  nextAvailable(afterHours: number, providerId?: number): Promise<ApiResult<Slot | null>>
   /** Times this visit can move to; withinHours defaults to the longest the priority allows */
   scheduleOptions(appointmentId: number, withinHours?: number): Promise<ApiResult<ScheduleOptions>>
   /** The patient accepts a new time; the intake and lab reports move with the visit */

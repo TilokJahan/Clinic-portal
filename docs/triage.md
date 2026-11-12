@@ -211,3 +211,30 @@ How the signals combine:
 When a lab result makes a patient urgent before a clinician has approved the explanation, the
 patient isn't shown the result. Their screen only says the care team would like to see them
 within 24 hours.
+
+### When nothing is free in time
+
+The patient never hits a dead end:
+
+- The first free time **after** the timeframe is offered ("Earliest available, later than
+  recommended"), as long as it is sooner than their current visit. The server accepts any time
+  that is within the limit *or* earlier than the current visit.
+- An **urgent** patient is told not to wait: go to urgent care or call the clinic, and call the
+  emergency number if it may be an emergency.
+- The clinician queue flags every visit later than its priority allows (urgent more than 24 hours
+  away, soon more than 3 days) as **needs earlier visit**, so a clinician can offer a time or call.
+- Booking by timeframe shows the next free time after the timeframe instead of an empty list.
+
+### Urgent reserve
+
+Each provider keeps the **last slot of each day** free for urgent patients
+(`slots.reserved_for_urgent`, set by `schemav6_urgent_reserve.sql` and `seed.sql`).
+
+| Who | Sees and can take the reserve? |
+|---|---|
+| Ordinary booking (`/slots`, `/slots/earliest`, `POST /appointments`) | No, until it opens |
+| A patient whose priority is urgent (schedule options, reschedule) | Yes, marked "Kept for urgent care" |
+| A clinician offering an earlier visit | Yes |
+
+If no urgent patient has taken it **2 hours before it starts** (`RESERVE_OPENS_HOURS`), it opens
+to everyone, so the time isn't wasted. Both numbers are in `app/urgency.py`.

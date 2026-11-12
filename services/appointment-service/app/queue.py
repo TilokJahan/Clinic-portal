@@ -7,14 +7,24 @@ from typing import Any
 import psycopg
 
 from app.metrics import STREAM_CLIENTS
-from app.models import QueueEntry, QueueLab, TriageRecord
+from app.models import QueueEntry, QueueLab, TriageRecord, Urgency
 from app.reschedule import OFFER_PENDING
+from app.urgency import SEEN_WITHIN_HOURS
 
 TRIAGE_COLUMNS = """
     t.id, t.appointment_id, t.ai_urgency, t.final_urgency,
     coalesce(t.final_urgency, t.ai_urgency) AS urgency, t.overridden, t.suggested_specialty,
     t.red_flags, t.summary, t.latency_ms, t.tokens_used, t.created_at, t.reviewed_at
 """
+
+# The latest an urgent or soon visit should happen. Visits further away than this are flagged so
+# a clinician can offer an earlier time or call the patient, for example when no time was free
+# within the limit. Routine visits booked far ahead are the patient's choice and aren't flagged.
+LATEST_VISIT = (
+    "CASE {} "
+    f"WHEN 'urgent' THEN interval '{SEEN_WITHIN_HOURS[Urgency.URGENT]} hours' "
+    f"WHEN 'soon' THEN interval '{SEEN_WITHIN_HOURS[Urgency.SOON]} hours' END"
+)
 
 RANK = "CASE {} WHEN 'urgent' THEN 2 WHEN 'soon' THEN 1 WHEN 'routine' THEN 0 END"
 
@@ -46,8 +56,9 @@ QUEUE_SQL = f"""
                'explanation_approved', l.explanation_approved_at IS NOT NULL) END AS lab,
            {EFFECTIVE_URGENCY} AS urgency,
            coalesce(
-               a.status = 'booked' AND s.starts_at > now() + interval '24 hours'
-               AND ({EFFECTIVE_URGENCY}) = 'urgent' AND NOT {OFFER_PENDING},
+               a.status = 'booked'
+               AND s.starts_at > now() + ({LATEST_VISIT.format(EFFECTIVE_URGENCY)})
+               AND NOT {OFFER_PENDING},
                false) AS needs_earlier_visit,
            {OFFER_PENDING} AS offer_pending
     FROM appointments a
