@@ -58,7 +58,7 @@ Every change to this file goes through a pull request that all three of us revie
  "starts_at": "2030-01-07T09:00:00Z", "ends_at": "2030-01-07T09:30:00Z", "reserved": false}
 ```
 
-`reserved` is `true` for a slot in the urgent reserve that hasn't opened yet. Only urgent patients
+`reserved` is `true` for a slot in the urgent reserve. Only urgent patients
 (schedule options) and clinicians (earlier slots) are ever shown one; see
 [triage.md](triage.md#urgent-reserve).
 
@@ -285,7 +285,7 @@ intake there is no priority and any timeframe is allowed. Timeframes are 24, 72,
 **`GET /slots/earliest?within_hours=72&provider_id=1`** (any signed-in user): free, upcoming
 `Slot[]` that start in the next `within_hours`, earliest first, at most 12. Used to book by
 timeframe: the frontend proposes the first one and the patient accepts it or picks another. 422 if
-`within_hours` isn't one of the timeframes. The urgent reserve is left out until it opens.
+`within_hours` isn't one of the timeframes. The urgent reserve is never listed here.
 
 **`GET /slots/next-available?after_hours=72&provider_id=1`** (any signed-in user): the first free
 `Slot` after the timeframe, however far away, or `null` if there is none. Shown when nothing is
@@ -323,7 +323,7 @@ old appointment is cancelled. Returns the new `MyAppointment`.
 | 422 | The slot is later than the priority allows **and** not earlier than the current visit. A time past the limit that is still sooner than the current visit is accepted: when nothing is free in time, coming sooner is safer |
 
 `POST /appointments` also answers 409 `"That time is kept free for urgent care. Please pick
-another."` for a reserved slot that hasn't opened.
+another."` for a slot in the urgent reserve.
 
 ### Lab reports
 

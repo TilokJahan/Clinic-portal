@@ -227,14 +227,18 @@ The patient never hits a dead end:
 
 ### Urgent reserve
 
-Each provider keeps the **last slot of each day** free for urgent patients
-(`slots.reserved_for_urgent`, set by `schemav6_urgent_reserve.sql` and `seed.sql`).
+Each doctor keeps **one 30-minute slot a day** free for urgent patients, **at a different time
+for each doctor**, and the time moves on by one slot each day. Urgent patients then have a choice
+of times across the morning rather than one crowded slot. With three doctors on one day, for
+example, the reserves might be at 9:30, 10:00 and 10:30. The rule is `is_urgent_reserve()` in
+`schemav6_urgent_reserve.sql`, used by that migration and `seed.sql`; the result is stored in
+`slots.reserved_for_urgent`.
 
 | Who | Sees and can take the reserve? |
 |---|---|
-| Ordinary booking (`/slots`, `/slots/earliest`, `POST /appointments`) | No, until it opens |
+| Ordinary booking (`/slots`, `/slots/earliest`, `POST /appointments`) | No, never |
 | A patient whose priority is urgent (schedule options, reschedule) | Yes, marked "Kept for urgent care" |
 | A clinician offering an earlier visit | Yes |
 
-If no urgent patient has taken it **2 hours before it starts** (`RESERVE_OPENS_HOURS`), it opens
-to everyone, so the time isn't wasted. Both numbers are in `app/urgency.py`.
+The reserve never opens to ordinary booking, even if it is still free shortly before it
+starts: it is how the clinic can always give an urgent patient a visit that day.

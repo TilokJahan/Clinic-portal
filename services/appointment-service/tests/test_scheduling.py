@@ -342,11 +342,17 @@ def test_ordinary_booking_never_sees_or_takes_the_reserve(client, world):
     assert response.json()["detail"] == urgency.RESERVED_MESSAGE
 
 
-def test_a_reserve_nobody_urgent_took_opens_shortly_before_it_starts(client, world):
-    _reserve(world, IN_2H)  # starts in under 2 hours by now
+def test_the_reserve_never_opens_to_ordinary_booking(client, world):
+    soon = world.execute(
+        "INSERT INTO slots (provider_id, starts_at, ends_at, reserved_for_urgent) VALUES "
+        "(2, now() + interval '20 minutes', now() + interval '50 minutes', true) RETURNING id"
+    ).fetchone()[0]
+    # Still free 20 minutes before it starts, and still only for urgent care
     earliest = client.get("/slots/earliest", params={"within_hours": 24}, headers=OTHER).json()
-    assert earliest[0]["id"] == IN_2H and earliest[0]["reserved"] is False
-    assert client.post("/appointments", json={"slot_id": IN_2H}, headers=OTHER).status_code == 201
+    assert soon not in _ids(earliest)
+    assert client.post("/appointments", json={"slot_id": soon}, headers=OTHER).status_code == 409
+    _triage(world, "urgent")
+    assert _ids(_options(client).json()["slots"])[0] == soon
 
 
 @pytest.mark.parametrize("ai", ["soon", "routine"])
@@ -410,3 +416,13 @@ def test_the_migration_marks_the_reserve_tops_up_slots_and_can_run_twice(client,
     # 2 providers x 6 slots a day were added, one a day each is the reserve; the 8 fixture slots
     # don't fall on the schedule, so none of them is marked
     assert total == 8 + 2 * 6 * weekdays and reserved == 2 * weekdays
+    # One reserve per provider a day, never at the same time as the other provider's
+    clashes = world.execute(
+        "SELECT count(*) FROM slots a JOIN slots b ON a.provider_id < b.provider_id "
+        "AND a.starts_at = b.starts_at WHERE a.reserved_for_urgent AND b.reserved_for_urgent"
+    ).fetchone()[0]
+    per_day = world.execute(
+        "SELECT DISTINCT count(*) FROM slots WHERE reserved_for_urgent "
+        "GROUP BY provider_id, (starts_at AT TIME ZONE 'UTC')::date"
+    ).fetchall()
+    assert clashes == 0 and per_day == [(1,)]

@@ -13,14 +13,12 @@ SEEN_WITHIN_HOURS = {Urgency.URGENT: 24, Urgency.SOON: 72, Urgency.ROUTINE: 14 *
 # Before an intake there is no priority yet, so any timeframe is allowed
 NO_PRIORITY_HOURS = 14 * 24
 
-# The urgent reserve: each provider keeps the last slot of the day free for urgent patients
-# (marked in the database by schemav6_urgent_reserve.sql). Ordinary booking can't take it. If no
-# urgent patient has taken it this close to its start, it opens to everyone, so it isn't wasted.
-RESERVE_OPENS_HOURS = 2
-# SQL for a slot "s" that anyone may book: not reserved, or a reserve that has opened
-OPEN_TO_ALL = (
-    f"(NOT s.reserved_for_urgent OR s.starts_at <= now() + interval '{RESERVE_OPENS_HOURS} hours')"
-)
+# The urgent reserve: each provider keeps one 30-minute slot a day free for urgent patients, each
+# at a different time so urgent patients have a choice (is_urgent_reserve() in
+# schemav6_urgent_reserve.sql). It is never opened to ordinary booking: it is how the clinic can
+# always give an urgent patient a visit. Only urgent patients and clinician offers can use it.
+# SQL for a slot "s" that anyone may book
+OPEN_TO_ALL = "(NOT s.reserved_for_urgent)"
 
 RESERVED_MESSAGE = "That time is kept free for urgent care. Please pick another."
 
@@ -82,8 +80,9 @@ RULES = [
     "Patients choose when to come within the time allowed for their priority, never later. "
     "Nothing is moved until the patient accepts. If nothing is free in time, they can still take "
     "any time earlier than their current visit, and the clinician queue flags them.",
-    f"Each provider keeps the last slot of the day free for urgent patients. If no urgent patient "
-    f"needs it, it opens to everyone {RESERVE_OPENS_HOURS} hours before it starts.",
+    "Each doctor keeps one 30-minute slot a day free for urgent patients, each at a different "
+    "time so there is a choice across the day. Only urgent patients and clinicians can use it, so "
+    "the clinic can always give an urgent patient a visit.",
 ]
 
 
