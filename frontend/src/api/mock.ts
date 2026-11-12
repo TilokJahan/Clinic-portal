@@ -1,6 +1,6 @@
 import { sessionUser } from '../session'
 import { LAB_FILE_ACCEPT, labFileError } from '../labUpload'
-import type { Api, ApiResult, Appointment, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
+import type { Api, ApiResult, Appointment, PendingOffer, RescheduleOffer, UrgencyMatrix, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
 
 // In-memory stand-in for the appointment service, shaped exactly like docs/api.md.
 // Synthetic data only. Used by `npm run dev`; `npm run dev:api` talks to the real backend.
@@ -29,6 +29,65 @@ const labFiles = new Map<number, Blob>()
 const takenByOthers = new Set<number>()
 let nextId = 1000
 const listeners = new Set<(q: QueueEntry[]) => void>()
+const offers: { id: number; appointment_id: number; slot_id: number; status: RescheduleOffer['status']; created_at: string }[] = []
+
+// Mirrors app/urgency.py (GET /urgency-matrix)
+const MATRIX: UrgencyMatrix = {
+  levels: [
+    { urgency: 'urgent', seen_within_hours: 24, seen_within: 'Within 24 hours',
+      symptom_signals: ['A red-flag rule matches: chest pain or pressure, trouble breathing, stroke signs, fainting, severe bleeding, allergic swelling, worst-ever headache, or self-harm risk', 'The AI judges the symptoms urgent', 'The AI’s safety filter refused the message (treated as urgent until a clinician reads it)'],
+      lab_signals: ['Any critical value (critical low or critical high)'],
+      action: 'Top of the queue. The patient sees an emergency notice and can only choose a visit within 24 hours; a clinician can offer an earlier slot.' },
+    { urgency: 'soon', seen_within_hours: 72, seen_within: 'Within 3 days',
+      symptom_signals: ['The AI judges the symptoms new, worsening or needing a check this week', 'The AI could not be reached (safe default until a clinician reviews)'],
+      lab_signals: ['Any value outside the reference range (low or high)', 'A report that could not be read'],
+      action: 'Ahead of routine patients. The patient chooses a visit within 3 days.' },
+    { urgency: 'routine', seen_within_hours: 336, seen_within: 'Within 2 weeks',
+      symptom_signals: ['The AI judges the symptoms mild, stable or long-standing'],
+      lab_signals: ['All values within the reference range'],
+      action: 'Seen in order of arrival. The patient chooses any visit within 2 weeks.' },
+  ],
+  rules: [
+    'The priority is the higher of the symptom priority and the lab priority (see the grid).',
+    'Fixed rules decide red flags and critical lab values. The AI can raise a priority but never lower one set by a rule.',
+    'A clinician reviews every AI suggestion. A clinician’s decision made after the latest lab result is final.',
+    'Patients choose when to come within the time allowed for their priority, never later. Nothing is moved until the patient accepts.',
+  ],
+  timeframes: [
+    { hours: 24, label: 'Within 24 hours' }, { hours: 72, label: 'Within 3 days' },
+    { hours: 168, label: 'Within 1 week' }, { hours: 336, label: 'Within 2 weeks' },
+  ],
+}
+const limitFor = (u: Urgency | null) => MATRIX.levels.find((l) => l.urgency === u)?.seen_within_hours ?? 336
+const limitMessage = (hours: number) =>
+  `Your care team needs to see you ${MATRIX.timeframes.find((t) => t.hours === hours)!.label.toLowerCase()}. Please choose an earlier time.`
+const isActive = (slotId: number) => takenByOthers.has(slotId) || appointments.some((a) => a.slot_id === slotId && a.status !== 'cancelled')
+
+/** Free, upcoming slots starting within the next `hours`, earliest first. */
+function freeSlotsWithin(hours: number, providerId?: number, limit = 12): Slot[] {
+  const now = Date.now(), end = now + hours * 3_600_000
+  const days = new Set<string>()
+  for (let t = now; t <= end + 86_400_000; t += 86_400_000) days.add(new Date(t).toISOString().slice(0, 10))
+  return [...days].flatMap(slotsFor)
+    .filter((s) => { const at = Date.parse(s.starts_at); return at > now && at <= end && !isActive(s.id) && (!providerId || s.provider_id === providerId) })
+    .sort((x, y) => x.starts_at.localeCompare(y.starts_at) || x.provider_id - y.provider_id)
+    .slice(0, limit)
+}
+
+/** An offer the patient can still act on: pending, slot not started and still free. */
+const liveOffer = (appointmentId: number) => offers.find((o) => o.appointment_id === appointmentId && o.status === 'pending'
+  && Date.parse(slots.get(o.slot_id)!.starts_at) > Date.now() && !isActive(o.slot_id))
+
+/** Book the slot, move the intake and lab reports over, cancel the old visit (app/reschedule.py). */
+function moveBooking(old: Appointment, slotId: number): Appointment {
+  const moved: Appointment = { id: nextId++, patient_id: old.patient_id, slot_id: slotId, status: 'booked', created_at: new Date().toISOString() }
+  appointments.push(moved)
+  triage.filter((t) => t.appointment_id === old.id).forEach((t) => { t.appointment_id = moved.id })
+  labReports.filter((r) => r.appointment_id === old.id).forEach((r) => { r.appointment_id = moved.id })
+  offers.filter((o) => o.appointment_id === old.id && o.status === 'pending').forEach((o) => { o.status = 'expired' })
+  old.status = 'cancelled'
+  return moved
+}
 
 function slotsFor(date: string): Slot[] {
   const day = new Date(`${date}T00:00:00Z`)
@@ -91,7 +150,10 @@ function queue(): QueueEntry[] {
       const decidedAfterLab = t?.reviewed_at && (!report?.processed_at || t.reviewed_at >= report.processed_at)
       const candidates = [t?.urgency, lab?.urgency].filter(Boolean) as Urgency[]
       const highest = candidates.sort((x, y) => ORDER[x] - ORDER[y])[0] ?? null
-      return { ...e, lab, urgency: decidedAfterLab ? t!.final_urgency : highest }
+      const urgency = decidedAfterLab ? t!.final_urgency : highest
+      const offerPending = Boolean(liveOffer(e.appointment_id))
+      const needsEarlier = e.status === 'booked' && urgency === 'urgent' && !offerPending && Date.parse(e.starts_at) > Date.now() + 86_400_000
+      return { ...e, lab, urgency, needs_earlier_visit: needsEarlier, offer_pending: offerPending }
     })
     .sort((x, y) => {
       const ux = x.urgency ? ORDER[x.urgency] : 3, uy = y.urgency ? ORDER[y.urgency] : 3
@@ -146,6 +208,19 @@ async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boole
   return ok(patientView(report))
 }
 
+function pendingOfferFor(appointmentId: number): PendingOffer | null {
+  const offer = liveOffer(appointmentId)
+  if (!offer) return null
+  const slot = slots.get(offer.slot_id)!
+  return { id: offer.id, slot_id: slot.id, starts_at: slot.starts_at, provider_name: slot.provider_name }
+}
+
+function myView(id: number): MyAppointment {
+  const a = appointments.find((x) => x.id === id)!, slot = slots.get(a.slot_id)!
+  return { id: a.id, slot_id: a.slot_id, status: a.status, created_at: a.created_at, starts_at: slot.starts_at, provider_name: slot.provider_name,
+    specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id), pending_offer: pendingOfferFor(a.id) }
+}
+
 // Seed a few waiting patients for the clinician screens
 ;(function seed() {
   const today = new Date()
@@ -189,10 +264,7 @@ export const mockApi: Api = {
     await pause(150)
     return ok(appointments
       .filter((a) => a.patient_id === mockPatientId() && a.status !== 'cancelled')
-      .map((a): MyAppointment => {
-        const slot = slots.get(a.slot_id)!
-        return { id: a.id, slot_id: a.slot_id, status: a.status, created_at: a.created_at, starts_at: slot.starts_at, provider_name: slot.provider_name, specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id) }
-      })
+      .map((a) => myView(a.id))
       .sort((x, y) => x.starts_at.localeCompare(y.starts_at)))
   },
   async submitIntake(appointmentId, symptoms) {
@@ -257,6 +329,84 @@ export const mockApi: Api = {
     if (!['clinician', 'admin'].includes(sessionUser()?.role ?? '')) return fail(403, 'Not allowed for your role')
     const file = labFiles.get(reportId)
     return file ? ok(file) : fail(404, 'Lab report not found')
+  },
+  async urgencyMatrix() { await pause(100); return ok(MATRIX) },
+  async earliestSlots(withinHours, providerId) {
+    await pause(200)
+    if (!MATRIX.timeframes.some((t) => t.hours === withinHours)) return fail(422, 'within_hours must be one of 24, 72, 168, 336')
+    return ok(freeSlotsWithin(withinHours, providerId))
+  },
+  async scheduleOptions(appointmentId, withinHours) {
+    await pause(200)
+    const appt = appointments.find((a) => a.id === appointmentId && a.patient_id === mockPatientId())
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
+    const priority = triage.find((x) => x.appointment_id === appointmentId)?.urgency ?? null
+    const limit = limitFor(queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null)
+    const within = withinHours ?? limit
+    if (within > limit) return fail(422, limitMessage(limit))
+    const startsAt = slots.get(appt.slot_id)!.starts_at
+    return ok({ appointment_id: appointmentId, starts_at: startsAt, priority, max_within_hours: limit, care_team_limit: limit < limitFor(priority),
+      within_hours: within, current_fits: Date.parse(startsAt) <= Date.now() + within * 3_600_000, slots: freeSlotsWithin(within) })
+  },
+  async reschedule(appointmentId, slotId) {
+    await pause(400)
+    const appt = appointments.find((a) => a.id === appointmentId && a.patient_id === mockPatientId())
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
+    const slot = slots.get(slotId)
+    if (!slot) return fail(404, 'Slot not found')
+    if (Date.parse(slot.starts_at) <= Date.now()) return fail(409, 'Slot has already started')
+    const limit = limitFor(queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null)
+    if (Date.parse(slot.starts_at) > Date.now() + limit * 3_600_000) return fail(422, limitMessage(limit))
+    if (isActive(slotId)) return fail(409, 'Slot is already booked')
+    const moved = moveBooking(appt, slotId)
+    notify()
+    return ok(myView(moved.id))
+  },
+  async earlierSlots(appointmentId) {
+    await pause(200)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
+    const current = slots.get(appt.slot_id)!
+    return ok(freeSlotsWithin(14 * 24, current.provider_id, 50).filter((s) => s.starts_at < current.starts_at).slice(0, 10))
+  },
+  async offerEarlierVisit(appointmentId, slotId) {
+    await pause(300)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
+    const slot = slots.get(slotId)
+    if (!slot) return fail(404, 'Slot not found')
+    if (isActive(slotId)) return fail(409, 'Slot is already booked')
+    if (liveOffer(appointmentId)) return fail(409, 'An offer is already pending')
+    offers.filter((o) => o.appointment_id === appointmentId && o.status === 'pending').forEach((o) => { o.status = 'expired' })
+    const offer = { id: nextId++, appointment_id: appointmentId, slot_id: slotId, status: 'pending' as const, created_at: new Date().toISOString() }
+    offers.push(offer)
+    notify()
+    return ok({ id: offer.id, appointment_id: appointmentId, proposed_slot_id: slotId, provider_name: slot.provider_name, starts_at: slot.starts_at, status: 'pending', reason: null, created_at: offer.created_at })
+  },
+  async acceptOffer(offerId) {
+    await pause(400)
+    const offer = offers.find((o) => o.id === offerId)
+    const appt = offer && appointments.find((a) => a.id === offer.appointment_id && a.patient_id === mockPatientId())
+    if (!offer || !appt) return fail(404, 'Offer not found')
+    if (offer.status !== 'pending') return fail(409, 'This offer is no longer available')
+    if (isActive(offer.slot_id)) { offer.status = 'expired'; return fail(409, 'That time was just taken') }
+    const moved = moveBooking(appt, offer.slot_id)
+    offer.status = 'accepted'
+    notify()
+    return ok(myView(moved.id))
+  },
+  async declineOffer(offerId) {
+    await pause(200)
+    const offer = offers.find((o) => o.id === offerId)
+    if (!offer || !appointments.some((a) => a.id === offer.appointment_id && a.patient_id === mockPatientId())) return fail(404, 'Offer not found')
+    if (offer.status !== 'pending') return fail(409, 'This offer is no longer available')
+    offer.status = 'declined'
+    notify()
+    return ok({ id: offer.id, status: offer.status })
   },
   async review(triageId, finalUrgency) {
     await pause(200)

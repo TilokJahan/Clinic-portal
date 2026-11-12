@@ -110,6 +110,10 @@ export interface QueueEntry {
   lab: QueueLab | null
   /** The higher of symptom and lab urgency, unless a clinician decided after the lab came in */
   urgency: Urgency | null
+  /** Urgent, booked more than 24 hours away, and no open offer: offer an earlier visit */
+  needs_earlier_visit?: boolean
+  /** An earlier visit was offered and the patient hasn't answered yet */
+  offer_pending?: boolean
 }
 
 // Every API call resolves to this instead of throwing, so pages can show the server's message.
@@ -136,6 +140,63 @@ export interface MyAppointment {
   provider_name: string
   specialty: string
   intake_submitted: boolean
+  /** An earlier visit the care team offered; the patient accepts or declines it */
+  pending_offer?: PendingOffer | null
+}
+
+export interface PendingOffer {
+  id: number
+  slot_id: number
+  starts_at: string
+  provider_name: string
+}
+
+/** An earlier-visit offer as the clinician sees it. */
+export interface RescheduleOffer {
+  id: number
+  appointment_id: number
+  proposed_slot_id: number
+  provider_name: string
+  starts_at: string
+  status: 'pending' | 'accepted' | 'declined' | 'expired'
+  reason: string | null
+  created_at: string
+}
+
+export interface Timeframe {
+  hours: number
+  label: string
+}
+
+/** One row of the urgency matrix (GET /urgency-matrix). */
+export interface UrgencyLevel {
+  urgency: Urgency
+  seen_within_hours: number
+  seen_within: string
+  symptom_signals: string[]
+  lab_signals: string[]
+  action: string
+}
+
+export interface UrgencyMatrix {
+  levels: UrgencyLevel[]
+  rules: string[]
+  timeframes: Timeframe[]
+}
+
+/** Times a patient can move a visit to, within the timeframe they chose. */
+export interface ScheduleOptions {
+  appointment_id: number
+  starts_at: string
+  /** The priority the patient was shown after their intake */
+  priority: Urgency | null
+  /** The latest they may choose; care_team_limit is true when that is stricter than priority */
+  max_within_hours: number
+  care_team_limit: boolean
+  within_hours: number
+  /** The current visit is already inside the chosen timeframe */
+  current_fits: boolean
+  slots: Slot[]
 }
 
 export interface Api {
@@ -155,4 +216,17 @@ export interface Api {
   approveLabExplanation(reportId: number, text: string): Promise<ApiResult<LabReport>>
   /** The original file (clinicians), for checking extracted values against it */
   labReportFile(reportId: number): Promise<ApiResult<Blob>>
+  /** How a priority is decided and how soon each priority should be seen */
+  urgencyMatrix(): Promise<ApiResult<UrgencyMatrix>>
+  /** Free times in the next withinHours, earliest first (booking by timeframe) */
+  earliestSlots(withinHours: number, providerId?: number): Promise<ApiResult<Slot[]>>
+  /** Times this visit can move to; withinHours defaults to the longest the priority allows */
+  scheduleOptions(appointmentId: number, withinHours?: number): Promise<ApiResult<ScheduleOptions>>
+  /** The patient accepts a new time; the intake and lab reports move with the visit */
+  reschedule(appointmentId: number, slotId: number): Promise<ApiResult<MyAppointment>>
+  /** Clinician: free earlier slots with the same provider */
+  earlierSlots(appointmentId: number): Promise<ApiResult<Slot[]>>
+  offerEarlierVisit(appointmentId: number, slotId: number): Promise<ApiResult<RescheduleOffer>>
+  acceptOffer(offerId: number): Promise<ApiResult<MyAppointment>>
+  declineOffer(offerId: number): Promise<ApiResult<{ id: number; status: string }>>
 }

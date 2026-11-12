@@ -7,6 +7,7 @@ import { loadPatientMessages, messagesForPatientLabel, PATIENT_MESSAGES_STORAGE_
 import type { QueueEntry, StreamStatus, Urgency } from '../types'
 import { useQueue } from '../useQueue'
 import { ClinicianLabSection, LabReasonChip } from '../LabPanels'
+import { ClinicianOfferSection } from '../Scheduling'
 
 const FILTERS = ['all', 'urgent', 'soon', 'routine'] as const
 
@@ -21,7 +22,7 @@ export function QueueRow({ entry, compact = false, selected = false, onSelect }:
     <div className="patient-cell"><div className={`patient-avatar avatar-${entry.appointment_id % 4}`}>{initials(entry.patient_label)}</div><div><b>{entry.patient_label}</b><span>{formatTime(entry.starts_at)} · {entry.provider_name}</span></div></div>
     <div className="reason-cell"><span>{t ? t.summary : entry.lab ? 'Lab report received' : 'Waiting for the patient’s intake'}</span>{t && t.red_flags.length > 0 && <small>{t.red_flags.length} red flag{t.red_flags.length > 1 ? 's' : ''}</small>}<LabReasonChip reason={entry.lab?.reason ?? null} urgency={entry.lab?.urgency ?? null} /></div>
     <div className="wait-cell">{formatWait(waitMinutes(entry))}</div>
-    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
+    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && entry.needs_earlier_visit && <small className="review-tag earlier">needs earlier visit</small>}{!compact && entry.offer_pending && <small className="review-tag">offer sent</small>}{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
   </>
   if (!onSelect) return <div className="queue-row">{cells}</div>
   return <button className={`queue-row queue-row-button ${selected ? 'selected' : ''}`} onClick={onSelect}>{cells}</button>
@@ -116,6 +117,7 @@ export function QueuePage() {
             {error && <ErrorBanner>{error}</ErrorBanner>}
           </div>
         </>}
+      <ClinicianOfferSection entry={selected} />
       <ClinicianLabSection appointmentId={selected.appointment_id} refreshKey={JSON.stringify(selected.lab)} />
       <div className="drawer-section queue-patient-messages">
         <span className="drawer-label">DEMO MESSAGES — THIS BROWSER</span>

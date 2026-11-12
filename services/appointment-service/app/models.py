@@ -172,3 +172,46 @@ class RescheduleOffer(BaseModel):
 class OfferResult(BaseModel):
     id: int
     status: str
+
+
+class Timeframe(BaseModel):
+    hours: int
+    label: str
+
+
+class UrgencyLevel(BaseModel):
+    """One row of the urgency matrix (see app/urgency.py)."""
+
+    urgency: Urgency
+    seen_within_hours: int
+    seen_within: str
+    symptom_signals: list[str]
+    lab_signals: list[str]
+    action: str
+
+
+class UrgencyMatrix(BaseModel):
+    levels: list[UrgencyLevel]
+    rules: list[str]
+    timeframes: list[Timeframe]
+
+
+class ScheduleOptions(BaseModel):
+    """Times a patient can move their visit to, within the timeframe they chose."""
+
+    appointment_id: int
+    starts_at: datetime
+    # The symptom priority the patient was shown after their intake (None before an intake)
+    priority: Urgency | None
+    # The latest they may choose. Can be stricter than their own priority when the care team
+    # (a lab result or a clinician's review) needs them sooner; care_team_limit says so.
+    max_within_hours: int
+    care_team_limit: bool
+    within_hours: int
+    # True when the current visit already falls inside the chosen timeframe
+    current_fits: bool
+    slots: list[Slot]
+
+
+class RescheduleRequest(BaseModel):
+    slot_id: int = Field(gt=0)

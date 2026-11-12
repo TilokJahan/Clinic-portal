@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { CalendarDays, FlaskConical, HeartPulse, LayoutDashboard, LogOut, ShieldCheck, Users } from 'lucide-react'
+import { CalendarDays, FlaskConical, Gauge, HeartPulse, LayoutDashboard, LogOut, ShieldCheck, Users } from 'lucide-react'
 import { BookingPage } from './pages/BookingPage'
 import { BillingPage } from './pages/BillingPage'
 import { Dashboard } from './pages/Dashboard'
@@ -7,6 +7,8 @@ import { IntakePage } from './pages/IntakePage'
 import { LoginPage } from './pages/LoginPage'
 import { LabResultsPage, PatientLabResultsPage } from './pages/LabResultsPage'
 import { PatientHome } from './pages/PatientHome'
+import { PriorityPage } from './pages/PriorityPage'
+import { ReschedulePage } from './pages/ReschedulePage'
 import { QueuePage } from './pages/QueuePage'
 import { ScrollReveal } from './ScrollReveal'
 import { useSession } from './session'
@@ -37,6 +39,7 @@ function App() {
           ? <>
               <NavLink to="/" end><LayoutDashboard size={16} />Overview</NavLink>
               <NavLink to="/queue"><Users size={16} />Patient queue</NavLink>
+              <NavLink to="/priority"><Gauge size={16} />Priority matrix</NavLink>
               {labAccess && <NavLink to="/lab-results"><FlaskConical size={16} />Upload lab results</NavLink>}
             </>
           : labTech
@@ -52,6 +55,7 @@ function App() {
                   }
                 }}><HeartPulse size={16} />Home</NavLink>
                 <NavLink to="/book"><CalendarDays size={16} />Schedule appointment</NavLink>
+                <NavLink to="/priority"><Gauge size={16} />How priority works</NavLink>
               </>}
       </nav>
       <nav className="patient-banner-login" aria-label="Account navigation">
@@ -66,6 +70,8 @@ function App() {
         <Route path="/queue" element={clinician ? <QueuePage /> : <Navigate to="/" replace />} />
         <Route path="/lab-results" element={labAccess ? <LabResultsPage /> : patient ? <PatientLabResultsPage /> : <Navigate to="/queue" replace />} />
         <Route path="/book" element={!clinician && !labTech ? <BookingPage /> : <Navigate to="/" replace />} />
+        <Route path="/schedule" element={patient ? <ReschedulePage /> : <Navigate to="/" replace />} />
+        <Route path="/priority" element={<PriorityPage />} />
         <Route path="/intake" element={!clinician && !labTech ? <IntakePage /> : <Navigate to="/" replace />} />
         <Route path="/billing" element={patient ? <BillingPage patientId={user.id} /> : <Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

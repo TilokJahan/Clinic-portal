@@ -3,6 +3,7 @@ import { NavLink, useSearchParams } from 'react-router-dom'
 import { Activity, ArrowRight, Loader2, ShieldCheck } from 'lucide-react'
 import { api } from '../api'
 import { PatientLabCard } from '../LabPanels'
+import { ScheduleChooser } from '../Scheduling'
 import { AiLabel, ErrorBanner, UrgencyPill } from '../components'
 import { formatDateTime } from '../format'
 import type { MyAppointment, TriageRecord } from '../types'
@@ -52,7 +53,11 @@ export function IntakePage() {
       </div>
       {result.red_flags.length > 0 && <div className="red-flag-box"><b><Activity size={15} /> Warning signs noted</b>{result.red_flags.map((f) => <span key={f}>• {f}</span>)}</div>}
       {result.urgency === 'urgent' && <ErrorBanner>If you think this may be an emergency, call your local emergency number now. Don’t wait for your appointment.</ErrorBanner>}
-      <NavLink to="/" className="button button-primary">Back to home <ArrowRight size={16} /></NavLink>
+    </div>
+    <div className="panel form-panel">
+      <div className="form-step"><span>NEXT</span><div><h2>Choose when to come in</h2><p>Pick a timeframe, then accept a time. Your priority sets how soon you should be seen.</p></div></div>
+      <ScheduleChooser appointmentId={result.appointment_id} />
+      <NavLink to="/" className="button button-secondary schedule-home">Back to home <ArrowRight size={16} /></NavLink>
     </div>
     <PatientLabCard appointmentId={result.appointment_id} /></>
 

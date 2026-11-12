@@ -24,6 +24,10 @@ Every change to this file goes through a pull request that all three of us revie
 | POST | `/reschedule-offers/{id}/accept` | appointment | patient (own) | Accept: move to the earlier slot | done |
 | POST | `/reschedule-offers/{id}/decline` | appointment | patient (own) | Decline: keep the booking | done |
 | GET | `/lab-reports/{id}/file` | appointment | clinician | The original file | done |
+| GET | `/urgency-matrix` | appointment | any signed-in user | How a priority is decided and how soon it is seen | done |
+| GET | `/slots/earliest?within_hours=72` | appointment | any signed-in user | Free times in a timeframe, earliest first (max 12) | done |
+| GET | `/appointments/{id}/schedule-options` | appointment | patient (own) | Times this visit can move to, within a timeframe | done |
+| POST | `/appointments/{id}/reschedule` | appointment | patient (own) | Accept a new time; intake and labs move with it | done |
 | POST | `/triage` | triage | internal | Redact PII, call AI, return structured result | done |
 | POST | `/labs/interpret` | triage | internal | OCR + unit conversion + rule flags + AI summary | done |
 
@@ -260,6 +264,49 @@ Returns `{"id": 4, "status": "declined"}`.
 
 When two patients accept offers for the same slot, the database's unique index on active slots
 lets one through; the other gets 409.
+
+### Urgency matrix and choosing a time
+
+The matrix is in `app/urgency.py` and explained in [triage.md](triage.md#urgency-matrix). Each
+priority has a longest timeframe: `urgent` 24 hours, `soon` 72, `routine` 336 (2 weeks); before an
+intake there is no priority and any timeframe is allowed. Timeframes are 24, 72, 168 and 336 hours.
+
+**`GET /urgency-matrix`** (any signed-in user):
+`{"levels": [{urgency, seen_within_hours, seen_within, symptom_signals[], lab_signals[], action}],
+"rules": [...], "timeframes": [{"hours": 24, "label": "Within 24 hours"}, ...]}`.
+
+**`GET /slots/earliest?within_hours=72&provider_id=1`** (any signed-in user): free, upcoming
+`Slot[]` that start in the next `within_hours`, earliest first, at most 12. Used to book by
+timeframe: the frontend proposes the first one and the patient accepts it or picks another. 422 if
+`within_hours` isn't one of the timeframes.
+
+**`GET /appointments/{id}/schedule-options?within_hours=72`** (patient, own booked visit):
+
+```json
+{"appointment_id": 7, "starts_at": "2030-01-14T09:00:00Z", "priority": "routine",
+ "max_within_hours": 24, "care_team_limit": true, "within_hours": 24, "current_fits": false,
+ "slots": ["...Slot, earliest first, at most 12"]}
+```
+
+- `priority` is the symptom priority the patient already saw after their intake (or `null`).
+- `max_within_hours` comes from the same priority the queue uses (symptoms and labs combined,
+  `EFFECTIVE_URGENCY`). When that is stricter than `priority`, for example after a critical lab
+  value the patient hasn't been shown yet, `care_team_limit` is `true` and the screen only says
+  the care team would like to see them sooner. No lab detail is sent.
+- Without `within_hours`, the longest allowed timeframe is used. A longer one is a 422 with
+  `"Your care team needs to see you within 24 hours. Please choose an earlier time."`
+- `current_fits` is `true` when the current visit already falls inside the timeframe.
+
+**`POST /appointments/{id}/reschedule`** (patient, own), body `{"slot_id": 12}`. In one
+transaction (the same one that accepts an offer) the patient is booked into the new slot, the
+intake and lab reports move to the new appointment, open offers for the old one expire, and the
+old appointment is cancelled. Returns the new `MyAppointment`.
+
+| Status | When |
+|---|---|
+| 404 | Unknown appointment (or someone else's), or unknown slot |
+| 409 | The visit isn't `booked`; the slot has started or is already booked (including your own) |
+| 422 | The slot starts later than the priority allows |
 
 ### Lab reports
 

@@ -32,6 +32,7 @@ that honours them (for example Azure Managed Prometheus) picks them up.
 | `triage_reviews_total{outcome}` | appointment | Clinician decisions: `accepted` or `overridden` |
 | `queue_stream_clients` | appointment | Clinicians with the live queue open |
 | `reschedule_offers_total{outcome}` | appointment | Earlier-visit offers: `offered`, `accepted`, `declined` or `expired` |
+| `patient_reschedules_total` | appointment | Visits a patient moved to a time they chose within their timeframe |
 | `triage_requests_total{urgency,fallback}` | triage | Results by urgency and fallback reason |
 | `triage_duration_seconds` | triage | Redaction plus AI call |
 | `redacted_entities_total{entity}` | triage | Requests in which a kind of personal detail was removed |

@@ -90,6 +90,23 @@ export const httpApi: Api = {
   labReports: (appointmentId) => request(`/appointments/${appointmentId}/lab-reports`),
   approveLabExplanation: (reportId, text) =>
     request(`/lab-reports/${reportId}`, json('PATCH', { patient_explanation: text })),
+  urgencyMatrix: () => request('/urgency-matrix'),
+  earliestSlots(withinHours, providerId) {
+    const params = new URLSearchParams({ within_hours: String(withinHours) })
+    if (providerId) params.set('provider_id', String(providerId))
+    return request(`/slots/earliest?${params}`)
+  },
+  scheduleOptions(appointmentId, withinHours) {
+    const params = withinHours ? `?${new URLSearchParams({ within_hours: String(withinHours) })}` : ''
+    return request(`/appointments/${appointmentId}/schedule-options${params}`)
+  },
+  reschedule: (appointmentId, slotId) =>
+    request(`/appointments/${appointmentId}/reschedule`, json('POST', { slot_id: slotId })),
+  earlierSlots: (appointmentId) => request(`/appointments/${appointmentId}/earlier-slots`),
+  offerEarlierVisit: (appointmentId, slotId) =>
+    request(`/appointments/${appointmentId}/reschedule-offers`, json('POST', { slot_id: slotId })),
+  acceptOffer: (offerId) => request(`/reschedule-offers/${offerId}/accept`, { method: 'POST' }),
+  declineOffer: (offerId) => request(`/reschedule-offers/${offerId}/decline`, { method: 'POST' }),
   async labReportFile(reportId) {
     const response = await send(`/lab-reports/${reportId}/file`, undefined, false)
     if (!response) return unreachable
