@@ -52,7 +52,7 @@ const MATRIX: UrgencyMatrix = {
     'Fixed rules decide red flags and critical lab values. The AI can raise a priority but never lower one set by a rule.',
     'A clinician reviews every AI suggestion. A clinician’s decision made after the latest lab result is final.',
     'Patients choose when to come within the time allowed for their priority, never later. Nothing is moved until the patient accepts. If nothing is free in time, they can still take any time earlier than their current visit, and the clinician queue flags them.',
-    'Each doctor keeps one 30-minute slot a day free for urgent patients, each at a different time so there is a choice across the day. Only urgent patients and clinicians can use it, so the clinic can always give an urgent patient a visit.',
+    'Each doctor keeps one 30-minute slot a day free for urgent patients, each at a different time so there is a choice across the day. Urgent patients come first; on the day itself, ordinary patients can fill it if no urgent patient is waiting.',
   ],
   timeframes: [
     { hours: 24, label: 'Within 24 hours' }, { hours: 72, label: 'Within 3 days' },
@@ -62,11 +62,13 @@ const MATRIX: UrgencyMatrix = {
 const limitFor = (u: Urgency | null) => MATRIX.levels.find((l) => l.urgency === u)?.seen_within_hours ?? 336
 const limitMessage = (hours: number) =>
   `Your care team needs to see you ${MATRIX.timeframes.find((t) => t.hours === hours)!.label.toLowerCase()}. Please choose an earlier time.`
-// The urgent reserve (app/urgency.py): one slot per doctor a day at different times, only for
-// urgent patients and clinician offers
+// The urgent reserve (app/urgency.py): one slot per doctor a day at different times. Ordinary
+// patients can fill it on its own day while no urgent patient is waiting
 const reservedSlots = new Set<number>()
 const RESERVED_MESSAGE = 'That time is kept free for urgent care. Please pick another.'
-const reserveClosed = (s: Slot) => reservedSlots.has(s.id)
+const clinicDay = (at: string | number) => new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+const urgentWaiting = () => queue().some((e) => e.status === 'booked' && e.urgency === 'urgent' && Date.parse(e.starts_at) > Date.now() + 86_400_000)
+const reserveClosed = (s: Slot) => reservedSlots.has(s.id) && (clinicDay(s.starts_at) > clinicDay(Date.now()) || urgentWaiting())
 const view = (s: Slot): Slot => ({ ...s, reserved: reserveClosed(s) })
 const isActive = (slotId: number) => takenByOthers.has(slotId) || appointments.some((a) => a.slot_id === slotId && a.status !== 'cancelled')
 

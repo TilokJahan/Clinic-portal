@@ -236,9 +236,13 @@ example, the reserves might be at 9:30, 10:00 and 10:30. The rule is `is_urgent_
 
 | Who | Sees and can take the reserve? |
 |---|---|
-| Ordinary booking (`/slots`, `/slots/earliest`, `POST /appointments`) | No, never |
+| Ordinary booking (`/slots`, `/slots/earliest`, `POST /appointments`) | Only on the slot's own day, and only while no urgent patient is waiting |
 | A patient whose priority is urgent (schedule options, reschedule) | Yes, marked "Kept for urgent care" |
 | A clinician offering an earlier visit | Yes |
 
-The reserve never opens to ordinary booking, even if it is still free shortly before it
-starts: it is how the clinic can always give an urgent patient a visit that day.
+Urgent patients come first. Before its day, the reserve is only for urgent patients and
+clinician offers. On its own day (clinic time, US Eastern) ordinary patients can fill it, but only
+while **no urgent patient is waiting**, meaning nobody whose priority is urgent has a visit more
+than 24 hours away. As soon as one is, the reserve is held for them again. A reserve nobody urgent
+needs isn't wasted, and an urgent patient can always be given a visit. The rule is `OPEN_TO_ALL`
+in `app/urgency.py`.

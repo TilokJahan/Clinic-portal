@@ -3,8 +3,8 @@
 -- seed.sql (the name sorts between them both in C and en_US order, which docker's init uses).
 --
 -- Each provider keeps one 30-minute slot a day free for urgent patients (see app/urgency.py).
--- Ordinary booking can never take it; only urgent patients and clinician offers can, so the clinic
--- always has a visit to give an urgent patient.
+-- Urgent patients and clinician offers can always use it. Ordinary patients can fill it on its own
+-- day, while no urgent patient is waiting (OPEN_TO_ALL in app/urgency.py).
 
 ALTER TABLE slots ADD COLUMN IF NOT EXISTS reserved_for_urgent BOOLEAN NOT NULL DEFAULT false;
 

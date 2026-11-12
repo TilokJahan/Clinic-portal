@@ -17,8 +17,8 @@ from psycopg import errors
 from app import db, metrics, urgency
 from app.auth import AnyUser, Patient
 from app.models import MyAppointment, RescheduleRequest, ScheduleOptions, Slot, UrgencyMatrix
-from app.queue import EFFECTIVE_URGENCY
 from app.reschedule import load_my_appointments, move_booking
+from app.urgency import EFFECTIVE_URGENCY
 
 router = APIRouter()
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]

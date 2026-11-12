@@ -342,17 +342,51 @@ def test_ordinary_booking_never_sees_or_takes_the_reserve(client, world):
     assert response.json()["detail"] == urgency.RESERVED_MESSAGE
 
 
-def test_the_reserve_never_opens_to_ordinary_booking(client, world):
-    soon = world.execute(
+def _reserve_later_today(db):
+    """A reserved slot an hour from now, if that is still today in clinic time."""
+    row = db.execute(
+        "SELECT ((now() + interval '1 hour') AT TIME ZONE %(tz)s)::date"
+        " = (now() AT TIME ZONE %(tz)s)::date",
+        {"tz": urgency.CLINIC_TIME_ZONE},
+    ).fetchone()
+    if not row[0]:
+        pytest.skip("too close to midnight in clinic time")
+    return db.execute(
         "INSERT INTO slots (provider_id, starts_at, ends_at, reserved_for_urgent) VALUES "
-        "(2, now() + interval '20 minutes', now() + interval '50 minutes', true) RETURNING id"
+        "(2, now() + interval '1 hour', now() + interval '90 minutes', true) RETURNING id"
     ).fetchone()[0]
-    # Still free 20 minutes before it starts, and still only for urgent care
+
+
+def _ordinary_can_book(client, slot):
     earliest = client.get("/slots/earliest", params={"within_hours": 24}, headers=OTHER).json()
-    assert soon not in _ids(earliest)
-    assert client.post("/appointments", json={"slot_id": soon}, headers=OTHER).status_code == 409
+    listed = slot in _ids(earliest)
+    booked = client.post("/appointments", json={"slot_id": slot}, headers=OTHER).status_code
+    return listed, booked
+
+
+def test_on_its_day_an_ordinary_patient_can_fill_a_reserve_nobody_urgent_needs(client, world):
+    today = _reserve_later_today(world)
+    assert _ordinary_can_book(client, today) == (True, 201)
+
+
+def test_on_its_day_the_reserve_is_held_while_an_urgent_patient_is_waiting(client, world):
+    today = _reserve_later_today(world)
+    _triage(world, "urgent")  # patient 1: urgent, visit 5 days away
+    assert _ordinary_can_book(client, today) == (False, 409)
+    assert _ids(_options(client).json()["slots"])[0] == today  # it's there for them
+    assert _move(client, today).status_code == 200
+
+
+def test_once_the_urgent_patient_has_a_visit_the_reserve_opens_again(client, world):
+    today = _reserve_later_today(world)
     _triage(world, "urgent")
-    assert _ids(_options(client).json()["slots"])[0] == soon
+    assert _move(client, IN_2H).status_code == 200  # seen within 24 hours: no longer waiting
+    assert _ordinary_can_book(client, today) == (True, 201)
+
+
+def test_before_its_day_the_reserve_is_only_for_urgent_patients(client, world):
+    _reserve(world, IN_30H)  # always a later day than today
+    assert _ordinary_can_book(client, IN_30H) == (False, 409)
 
 
 @pytest.mark.parametrize("ai", ["soon", "routine"])

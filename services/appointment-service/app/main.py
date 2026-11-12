@@ -116,8 +116,8 @@ def list_slots(
 ) -> list[Slot]:
     """Free, upcoming slots that start on the given day, earliest first.
 
-    A slot is free if it has no appointment, or only cancelled ones. The urgent reserve is never
-    listed here (see app/urgency.py).
+    A slot is free if it has no appointment, or only cancelled ones. The urgent reserve is only
+    listed on its own day while no urgent patient is waiting (see app/urgency.py).
     """
     start = datetime.combine(day, time.min, tzinfo=UTC)
     rows = conn.execute(

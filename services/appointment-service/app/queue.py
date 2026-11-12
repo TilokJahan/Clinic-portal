@@ -9,7 +9,7 @@ import psycopg
 from app.metrics import STREAM_CLIENTS
 from app.models import QueueEntry, QueueLab, TriageRecord, Urgency
 from app.reschedule import OFFER_PENDING
-from app.urgency import SEEN_WITHIN_HOURS
+from app.urgency import EFFECTIVE_URGENCY, SEEN_WITHIN_HOURS
 
 TRIAGE_COLUMNS = """
     t.id, t.appointment_id, t.ai_urgency, t.final_urgency,
@@ -25,23 +25,6 @@ LATEST_VISIT = (
     f"WHEN 'urgent' THEN interval '{SEEN_WITHIN_HOURS[Urgency.URGENT]} hours' "
     f"WHEN 'soon' THEN interval '{SEEN_WITHIN_HOURS[Urgency.SOON]} hours' END"
 )
-
-RANK = "CASE {} WHEN 'urgent' THEN 2 WHEN 'soon' THEN 1 WHEN 'routine' THEN 0 END"
-
-# The urgency the queue shows and sorts by: the higher of the symptom triage (clinician's final
-# choice or the AI's) and the lab urgency. A clinician who reviews after the latest lab result
-# came in has the final say. A critical lab value can never be hidden by an older decision.
-EFFECTIVE_URGENCY = f"""
-    CASE
-        WHEN t.reviewed_at IS NOT NULL
-             AND (l.processed_at IS NULL OR t.reviewed_at >= l.processed_at)
-            THEN t.final_urgency
-        WHEN coalesce({RANK.format("coalesce(t.final_urgency, t.ai_urgency)")}, -1)
-             >= coalesce({RANK.format("l.lab_urgency")}, -1)
-            THEN coalesce(t.final_urgency, t.ai_urgency)
-        ELSE l.lab_urgency
-    END
-"""
 
 # Waiting patients (booked or checked in). Most urgent first; within the same urgency, whoever
 # sent their intake or lab report first; patients with neither go last, by appointment time.
