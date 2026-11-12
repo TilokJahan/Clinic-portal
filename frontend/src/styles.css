@@ -1515,6 +1515,11 @@ a.patient-footer-item:hover > span > span { color: var(--teal-deep); text-decora
 
 .login-card form > label { color: #395c69; }
 
+.app-shell { display: flex; flex-direction: column; }
+.app-shell .main-area { min-height: 0; width: 100%; flex: 1; }
+.app-demo-notice { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); color: #486474; background: #eaf3f2; text-align: center; font-size: 12px; line-height: 1.6; }
+.app-demo-notice svg { flex-shrink: 0; }
+
 .lab-worklist-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
 .lab-worklist-controls .search-box { margin-left: auto; width: min(360px, 100%); }
 .lab-worklist-reports { display: grid; gap: 10px; margin: 16px 0 0; padding: 14px 0 0; list-style: none; border-top: 1px solid var(--line); }

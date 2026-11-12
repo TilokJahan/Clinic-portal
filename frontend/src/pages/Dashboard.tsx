@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { ArrowRight, Clock3, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import { Stat } from '../components'
+import { DashboardClock } from '../DashboardClock'
 import { formatWait, waitMinutes } from '../format'
 import { useQueue } from '../useQueue'
 import { LiveBadge, QueueRow } from './QueuePage'
 
 export function Dashboard() {
-  const [now, setNow] = useState(() => new Date())
   const { queue, status } = useQueue()
   const items = queue ?? []
   const triaged = items.filter((e) => e.triage)
@@ -17,25 +16,10 @@ export function Dashboard() {
   const reviewed = triaged.filter((e) => e.triage!.reviewed_at).length
   const pct = (n: number) => `${items.length ? (n / items.length) * 100 : 0}%`
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000)
-    return () => window.clearInterval(timer)
-  }, [])
-
   return <>
     <section className="stat-grid clinician-stats">
       <div className="dashboard-status">
-        <time dateTime={now.toISOString()}>
-          {new Intl.DateTimeFormat(undefined, {
-            weekday: 'long',
-            month: 'long',
-            day: 'numeric',
-            year: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-            second: '2-digit',
-          }).format(now)}
-        </time>
+        <DashboardClock />
         <p>Here’s the current status of the clinic.</p>
       </div>
       <Stat icon={<Users />} label="Waiting patients" value={String(items.length).padStart(2, '0')} note={`${items.length - triaged.length} still to send symptoms`} tone="mint" />

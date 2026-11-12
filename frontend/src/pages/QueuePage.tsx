@@ -118,7 +118,8 @@ export function QueuePage() {
         </>}
       <ClinicianLabSection appointmentId={selected.appointment_id} refreshKey={JSON.stringify(selected.lab)} />
       <div className="drawer-section queue-patient-messages">
-        <span className="drawer-label">MESSAGE FROM PATIENT</span>
+        <span className="drawer-label">DEMO MESSAGES — THIS BROWSER</span>
+        <p className="field-hint">Sample messages saved in this browser only. Messages are not delivered between browsers or devices.</p>
         {patientMessagesError
           ? <ErrorBanner>{patientMessagesError}</ErrorBanner>
           : selectedMessages.length
@@ -128,7 +129,7 @@ export function QueuePage() {
                   <time dateTime={item.sentAt}>{new Date(item.sentAt).toLocaleString()}</time>
                 </article>
               ))}</div>
-            : <p>No messages from this patient yet.</p>}
+            : <p>No demo messages saved for this patient in this browser.</p>}
       </div>
       <div className="drawer-safety"><ShieldCheck size={16} /> AI suggestions support clinical judgment and are not a diagnosis. Critical lab values come from fixed rules, not the AI.</div>
     </aside></div>}

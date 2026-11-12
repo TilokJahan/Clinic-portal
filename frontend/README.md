@@ -42,9 +42,15 @@ with the appointment service running to exercise persistent storage and real aut
 API mode defaults to HTTP without needing an `.env.api` file; an explicit `VITE_API_MODE`
 environment value overrides this default.
 
-The patient home page includes a prototype message composer. Messages are saved in this browser and appear in the matching patient's clinician queue details in the same browser.
+The patient home page includes a demo message composer. It explicitly saves messages in this
+browser only; messages are not delivered to a care team or to other browsers or devices.
+The matching clinician queue section is labelled as browser-local demo messages.
 
-The Billing and statements page uses synthetic data from `src/billingApi.ts`. The mock defines the
+Every signed-in page includes a footer stating that only synthetic demo data should be used.
+The dashboard clock updates in its own component so its timer does not rerender the queue.
+
+The Billing and statements page labels its statements and balances as sample data, with no real
+charges or payments. It uses synthetic data from `src/billingApi.ts`. The mock defines the
 backend contract as `GET /api/patients/{patient_id}/bills`, returning bill records with `id`,
 `patient_id`, `description`, `service_date` (`YYYY-MM-DD`), `amount_cents`, `status` (`paid`,
 `due`, or `overdue`), and nullable `due_date` (`YYYY-MM-DD`). Replace the mock implementation with

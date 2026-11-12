@@ -36,15 +36,15 @@ export function BillingPage({ patientId }: { patientId: number }) {
   return <>
     <div className="welcome-row">
       <div>
-        <div className="eyebrow"><ReceiptText size={14} /> YOUR CARE</div>
+        <div className="eyebrow"><ReceiptText size={14} /> SAMPLE DATA</div>
         <h1>Billing and statements</h1>
-        <p>Review your clinic bills and payment status.</p>
+        <p>Sample statements for demonstration only. No real charges or payments.</p>
       </div>
-      {loaded && <div className="lab-result-count">{formatCurrency(outstanding)} outstanding</div>}
+      {loaded && <div className="lab-result-count">{formatCurrency(outstanding)} sample balance</div>}
     </div>
     {error && <ErrorBanner>{error}</ErrorBanner>}
-    <section className="billing-list" aria-label="Patient bills">
-      {!loaded && <div className="panel empty-state">Loading your bills…</div>}
+    <section className="billing-list" aria-label="Sample bills">
+      {!loaded && <div className="panel empty-state">Loading sample bills…</div>}
       {loaded && bills.map((bill) => (
         <article className="panel billing-card" key={bill.id}>
           <div className="billing-card-heading">
@@ -58,8 +58,7 @@ export function BillingPage({ patientId }: { patientId: number }) {
           </div>
         </article>
       ))}
-      {loaded && !error && bills.length === 0 && <div className="panel empty-state">No bills are available for your account.</div>}
+      {loaded && !error && bills.length === 0 && <div className="panel empty-state">No sample bills are available for this demo account.</div>}
     </section>
-    <p className="billing-prototype-note">Sample billing data for demonstration only. Contact your clinic for actual statements or payment assistance.</p>
   </>
 }

@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { CalendarDays, FlaskConical, HeartPulse, LayoutDashboard, LogOut, Users } from 'lucide-react'
+import { CalendarDays, FlaskConical, HeartPulse, LayoutDashboard, LogOut, ShieldCheck, Users } from 'lucide-react'
 import { BookingPage } from './pages/BookingPage'
 import { BillingPage } from './pages/BillingPage'
 import { Dashboard } from './pages/Dashboard'
@@ -71,6 +71,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes></ScrollReveal></div>
     </main>
+    <footer className="app-demo-notice"><ShieldCheck size={15} aria-hidden="true" /><span>Synthetic demo data only. Do not enter real patient information.</span></footer>
   </div>
 }
 

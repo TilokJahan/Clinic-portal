@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Ambulance, ArrowDown, ArrowRight, Baby, Bean, Bone, Brain, CalendarDays, CalendarCheck, Ear, Heart, HeartPulse, MapPin, MessageCircle, Phone, ReceiptText, Ribbon, Salad, ScanFace, Send, ShieldCheck, Stethoscope, TestTube2 } from 'lucide-react'
+import { Ambulance, ArrowDown, ArrowRight, Baby, Bean, Bone, Brain, CalendarDays, CalendarCheck, Ear, Heart, HeartPulse, MapPin, MessageCircle, Phone, ReceiptText, Ribbon, Salad, ScanFace, Save, ShieldCheck, Stethoscope, TestTube2 } from 'lucide-react'
 import { formatDateTime } from '../format'
 import { addPatientMessage, loadPatientMessages, type PatientMessage } from '../patientMessages'
 import { api } from '../api'
@@ -31,10 +31,10 @@ function WomanIcon({ size, strokeWidth }: { size?: number; strokeWidth?: number 
 }
 
 const PATIENT_TOOLS = [
-  { title: 'Message your doctor', description: 'Send a message to your clinic team.', icon: MessageCircle, to: null, action: 'message' },
+  { title: 'Message your doctor (demo)', description: 'Save a sample message in this browser only.', icon: MessageCircle, to: null, action: 'message' },
   { title: 'View lab results', description: 'Check results shared with you by your care team.', icon: TestTube2, to: '/lab-results' },
   { title: 'Manage your appointments', description: 'Choose a time for your next clinic visit.', icon: CalendarCheck, to: '/book' },
-  { title: 'Billing and statements', description: 'Review billing information and payment options.', icon: ReceiptText, to: '/billing' },
+  { title: 'Billing and statements', description: 'Explore sample statements and balances.', icon: ReceiptText, to: '/billing' },
 ]
 
 export function PatientHome({ patientId }: { patientId: number }) {
@@ -43,7 +43,7 @@ export function PatientHome({ patientId }: { patientId: number }) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState<PatientMessage[]>([])
   const [messageError, setMessageError] = useState('')
-  const [messageSent, setMessageSent] = useState(false)
+  const [messageSaved, setMessageSaved] = useState(false)
   const messageSection = useRef<HTMLElement>(null)
   const [upcoming, setUpcoming] = useState<MyAppointment[]>([])
   useEffect(() => {
@@ -63,15 +63,15 @@ export function PatientHome({ patientId }: { patientId: number }) {
     }
   }, [patientId])
 
-  function sendMessage(event: FormEvent<HTMLFormElement>) {
+  function saveMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setMessageError('')
-    setMessageSent(false)
+    setMessageSaved(false)
     try {
       const updated = addPatientMessage(patientId, message)
       setMessages(updated.filter((item) => item.patientId === patientId))
       setMessage('')
-      setMessageSent(true)
+      setMessageSaved(true)
     } catch (reason) {
       setMessageError(reason instanceof Error ? reason.message : 'Your message could not be saved.')
     }
@@ -115,20 +115,21 @@ export function PatientHome({ patientId }: { patientId: number }) {
     {messageOpen && <section className="panel patient-message-panel" id="message-doctor" aria-labelledby="message-doctor-title" ref={messageSection}>
       <div className="info-icon mint"><MessageCircle /></div>
       <div className="patient-message-heading">
-        <h2 id="message-doctor-title">Message your doctor</h2>
+        <h2 id="message-doctor-title">Message your doctor (demo)</h2>
+        <p id="message-demo-notice">Demo only: messages are saved in this browser. They are not delivered to your care team or other browsers or devices.</p>
       </div>
-      <form className="patient-message-form" onSubmit={sendMessage}>
-        <label htmlFor="patient-message">Your message</label>
-        <textarea id="patient-message" value={message} maxLength={2000} onChange={(event) => { setMessage(event.target.value); setMessageSent(false) }} placeholder="How can your care team help?" required />
+      <form className="patient-message-form" onSubmit={saveMessage}>
+        <label htmlFor="patient-message">Sample message</label>
+        <textarea id="patient-message" value={message} maxLength={2000} aria-describedby="message-demo-notice" onChange={(event) => { setMessage(event.target.value); setMessageSaved(false) }} placeholder="Write a sample message for this demo." required />
         <div className="patient-message-actions">
           <span>{message.length}/2000 characters</span>
-          <button className="button button-primary" type="submit"><Send size={15} />Send message</button>
+          <button className="button button-primary" type="submit"><Save size={15} />Save demo message</button>
         </div>
         {messageError && <p className="patient-message-status error">{messageError}</p>}
-        {messageSent && <p className="patient-message-status success">Your message has been saved for your care team.</p>}
+        {messageSaved && <p className="patient-message-status success" role="status">Demo message saved in this browser. It has not been sent to your care team.</p>}
       </form>
       {messages.length > 0 && <div className="patient-message-history">
-        <h3>Messages you’ve sent</h3>
+        <h3>Messages saved in this browser</h3>
         {messages.map((item) => <article className="patient-message-item" key={item.id}>
           <p>{item.message}</p><time dateTime={item.sentAt}>{new Date(item.sentAt).toLocaleString()}</time>
         </article>)}
