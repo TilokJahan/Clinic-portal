@@ -39,7 +39,7 @@ export function IntakePage() {
       : response.detail)
   }
 
-  const header = <div className="welcome-row"><div><div className="eyebrow">CLOUD CLINIC</div><h1>Tell us how you’re feeling</h1><p>A few details help your care team prepare for your visit.</p></div></div>
+  const header = <div className="welcome-row"><div><h1>Tell us how you’re feeling</h1><p>A few details help your care team prepare for your visit.</p></div></div>
 
   if (result) return <>{header}
     <div className="panel form-panel triage-result">
@@ -76,6 +76,6 @@ export function IntakePage() {
       </label>
       {error && <ErrorBanner>{error}</ErrorBanner>}
       <div className="intake-disclaimer"><ShieldCheck size={17} /><p><b>This is not a diagnosis.</b> An AI suggests a priority and a clinician reviews it and makes all care decisions. If you may be experiencing an emergency, call your local emergency number.</p></div>
-      <button disabled={busy} className="button button-primary submit-button">{busy ? <><Loader2 className="spin" size={16} /> Sending…</> : <>Send to care team <ArrowRight size={16} /></>}</button>
+      <button disabled={busy} className="button button-primary submit-button">{busy ? <><Loader2 className="spin" size={16} /> Sending…</> : 'Submit'}</button>
     </form></>
 }

@@ -21,7 +21,7 @@ export const waitMinutes = (entry: QueueEntry, now = Date.now()) =>
   Math.max(0, Math.round((now - Date.parse(entry.triage?.created_at ?? entry.booked_at)) / 60_000))
 
 export const formatWait = (minutes: number) =>
-  minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+  minutes < 60 ? `${minutes} m` : `${Math.floor(minutes / 60)} h ${minutes % 60} m`
 
 /** "Patient 0042" -> "42" for the avatar circle. */
 export const initials = (label: string) => String(Number(label.replace(/\D/g, '')) || '?')

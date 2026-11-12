@@ -14,7 +14,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
     setBusy(false)
     if (!result.ok) { setError(result.detail); return }
     onLogin(result.data)
-    navigate(result.data.user.role === 'patient' ? '/' : '/queue')
+    navigate(result.data.user.role === 'clinician' || result.data.user.role === 'admin' ? '/queue' : '/')
   }
 
   return <div className="login-wrap"><div className="panel login-card">
@@ -41,6 +41,7 @@ function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string,
     <div className="login-role"><span>Continue as</span><div>
       <button type="button" className={role === 'patient' ? 'selected' : ''} onClick={() => choose('patient')}>Patient</button>
       <button type="button" className={role === 'clinician' ? 'selected' : ''} onClick={() => choose('clinician')}>Clinician</button>
+      <button type="button" className={role === 'lab_tech' ? 'selected' : ''} onClick={() => choose('lab_tech')}>Lab Tech</button>
     </div></div>
     <label>Demo account
       <select value={email} onChange={(e) => setEmail(e.target.value)}>

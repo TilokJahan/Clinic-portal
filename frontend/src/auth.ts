@@ -21,6 +21,8 @@ export const DEMO_ACCOUNTS: User[] = [
   { id: 2, email: 'patient2@example.com', role: 'patient' },
   { id: 3, email: 'patient3@example.com', role: 'patient' },
   { id: 4, email: 'clinician1@example.com', role: 'clinician' },
+  // IDs are only used in mock mode. Dev sign-in sends email and uses the backend's returned ID.
+  { id: 6, email: 'labtech1@example.com', role: 'lab_tech' },
 ]
 
 const fail = (status: number, detail: string): ApiResult<never> => ({ ok: false, status, detail })
