@@ -45,14 +45,36 @@ What the roles allow:
 Only the owner can grant access to others or apply Terraform changes that create new role
 assignments (Contributor can't assign roles).
 
-Getting started for teammates:
+### Getting started for teammates
+
+**There is no invitation email.** Azure only emails guests from outside the organization. We are
+all members of the WMU tenant, so the roles above work as soon as they're assigned. Just sign in.
+
+In the portal:
+
+1. Go to <https://portal.azure.com> and sign in with your `@wmich.edu` account (the same login as
+   other WMU Microsoft services).
+2. If you see nothing or "No subscriptions found": click the gear icon (**Settings**) →
+   **Directories + subscriptions**. Pick the **Western Michigan University** directory and make
+   sure **Azure for Students** is ticked in the subscription filter.
+3. Search **Resource groups** → open **rg-clinicportal**. The AKS cluster, PostgreSQL server,
+   storage account, Key Vault and Azure OpenAI resource are all here.
+4. Still nothing? Sign out completely and sign back in (new roles can need a fresh sign-in), then
+   tell the owner the exact message you see.
+
+From the command line (needs the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli),
+`kubectl` and Terraform):
 
 ```bash
 az login
 az account set --subscription e8fb3009-935e-458c-8a9f-5ddef82f3155
+az aks get-credentials -g rg-clinicportal -n aks-clinicportal   # then: kubectl get pods -n clinic-portal
 terraform -chdir=infra/terraform init -backend-config="storage_account_name=clinicportaltf9d0ae9"
 terraform -chdir=infra/terraform plan   # should say "No changes"
 ```
+
+Please don't change resources in the portal by hand; changes go through Terraform so the state
+stays correct. Stopping and starting AKS and PostgreSQL to save credit is fine.
 
 ## Budget alerts
 
