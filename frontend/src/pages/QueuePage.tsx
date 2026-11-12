@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Activity, Check, Loader2, Search, ShieldCheck, X } from 'lucide-react'
 import { api } from '../api'
 import { AiLabel, ErrorBanner, UrgencyPill } from '../components'
 import { formatDateTime, formatTime, formatWait, initials, waitMinutes } from '../format'
+import { loadPatientMessages, messagesForPatientLabel, PATIENT_MESSAGES_STORAGE_KEY, type PatientMessage } from '../patientMessages'
 import type { QueueEntry, StreamStatus, Urgency } from '../types'
 import { useQueue } from '../useQueue'
 import { ClinicianLabSection, LabReasonChip } from '../LabPanels'
@@ -34,9 +35,30 @@ export function QueuePage() {
   const [saving, setSaving] = useState<Urgency | null>(null)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [patientMessages, setPatientMessages] = useState<PatientMessage[]>([])
+  const [patientMessagesError, setPatientMessagesError] = useState('')
+
+  useEffect(() => {
+    function refreshPatientMessages() {
+      try {
+        setPatientMessages(loadPatientMessages())
+        setPatientMessagesError('')
+      } catch (reason) {
+        setPatientMessagesError(reason instanceof Error ? reason.message : 'Patient messages could not be loaded.')
+      }
+    }
+
+    refreshPatientMessages()
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === PATIENT_MESSAGES_STORAGE_KEY || event.key === null) refreshPatientMessages()
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [])
 
   const items = queue ?? []
   const selected = items.find((e) => e.appointment_id === selectedId) ?? null
+  const selectedMessages = selected ? messagesForPatientLabel(patientMessages, selected.patient_label) : []
   const q = query.toLowerCase()
   const visible = items.filter((e) =>
     (filter === 'all' || e.urgency === filter) &&
@@ -95,6 +117,20 @@ export function QueuePage() {
           </div>
         </>}
       <ClinicianLabSection appointmentId={selected.appointment_id} refreshKey={JSON.stringify(selected.lab)} />
+      <div className="drawer-section queue-patient-messages">
+        <span className="drawer-label">DEMO MESSAGES — THIS BROWSER</span>
+        <p className="field-hint">Sample messages saved in this browser only. Messages are not delivered between browsers or devices.</p>
+        {patientMessagesError
+          ? <ErrorBanner>{patientMessagesError}</ErrorBanner>
+          : selectedMessages.length
+            ? <div className="queue-patient-message-list">{selectedMessages.map((item) => (
+                <article className="panel queue-patient-message" key={item.id}>
+                  <p>{item.message}</p>
+                  <time dateTime={item.sentAt}>{new Date(item.sentAt).toLocaleString()}</time>
+                </article>
+              ))}</div>
+            : <p>No demo messages saved for this patient in this browser.</p>}
+      </div>
       <div className="drawer-safety"><ShieldCheck size={16} /> AI suggestions support clinical judgment and are not a diagnosis. Critical lab values come from fixed rules, not the AI.</div>
     </aside></div>}
   </>

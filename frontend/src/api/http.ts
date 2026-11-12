@@ -81,6 +81,12 @@ export const httpApi: Api = {
     form.append('file', file)
     return request(`/appointments/${appointmentId}/lab-reports`, { method: 'POST', body: form }, false)
   },
+  labWorklist: (date) => request(`/lab/worklist?${new URLSearchParams({ date })}`),
+  uploadLabReportAsTech(appointmentId, file) {
+    const form = new FormData()
+    form.append('file', file)
+    return request(`/lab/appointments/${appointmentId}/reports`, { method: 'POST', body: form }, false)
+  },
   labReports: (appointmentId) => request(`/appointments/${appointmentId}/lab-reports`),
   approveLabExplanation: (reportId, text) =>
     request(`/lab-reports/${reportId}`, json('PATCH', { patient_explanation: text })),

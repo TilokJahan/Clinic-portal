@@ -1,14 +1,10 @@
 import { NavLink } from 'react-router-dom'
 import { ArrowRight, Clock3, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import { Stat } from '../components'
-import { formatWait, todayLong, waitMinutes } from '../format'
+import { DashboardClock } from '../DashboardClock'
+import { formatWait, waitMinutes } from '../format'
 import { useQueue } from '../useQueue'
 import { LiveBadge, QueueRow } from './QueuePage'
-
-const greeting = () => {
-  const hour = new Date().getHours()
-  return hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
-}
 
 export function Dashboard() {
   const { queue, status } = useQueue()
@@ -21,8 +17,11 @@ export function Dashboard() {
   const pct = (n: number) => `${items.length ? (n / items.length) * 100 : 0}%`
 
   return <>
-    <div className="welcome-row"><div><div className="eyebrow">{todayLong()}</div><h1>{greeting()}</h1><p>Here’s what’s happening at your clinic.</p></div></div>
-    <section className="stat-grid">
+    <section className="stat-grid clinician-stats">
+      <div className="dashboard-status">
+        <DashboardClock />
+        <p>Here’s the current status of the clinic.</p>
+      </div>
       <Stat icon={<Users />} label="Waiting patients" value={String(items.length).padStart(2, '0')} note={`${items.length - triaged.length} still to send symptoms`} tone="mint" />
       <Stat icon={<ShieldCheck />} label="Needs attention" value={String(counts.urgent).padStart(2, '0')} note="urgent triage" tone="rose" />
       <Stat icon={<Clock3 />} label="Avg. wait since intake" value={formatWait(avgWait)} note="patients with an intake" tone="blue" />
