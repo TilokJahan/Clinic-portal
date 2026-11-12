@@ -23,7 +23,10 @@ os.environ["AUTH_DEV_SECRET"] = "test-secret-for-pytest-only"
 
 DB_DIR = Path(__file__).resolve().parent.parent / "db"
 TEST_SCHEMA = "pytest_appointments"
-TABLES = "lab_results, lab_reports, triage_results, appointments, slots, providers, users"
+TABLES = (
+    "reschedule_offers, lab_results, lab_reports, triage_results, appointments, slots, "
+    "providers, users"
+)
 
 
 def _connect(url: str) -> psycopg.Connection:

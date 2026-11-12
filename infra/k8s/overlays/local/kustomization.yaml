@@ -25,6 +25,7 @@ configMapGenerator:
       - 02-schemav2_lab_results.sql=../../../../services/appointment-service/db/schemav2_lab_results.sql
       - 02-schemav3_lab_tech.sql=../../../../services/appointment-service/db/schemav3_lab_tech.sql
       - 02-schemav4_lab_uploaded_by.sql=../../../../services/appointment-service/db/schemav4_lab_uploaded_by.sql
+      - 02-schemav5_reschedule.sql=../../../../services/appointment-service/db/schemav5_reschedule.sql
       - 03-seed.sql=../../../../services/appointment-service/db/seed.sql
 secretGenerator:
   # Local-only throwaway values. Real secrets come from Azure Key Vault (see overlays/aks).

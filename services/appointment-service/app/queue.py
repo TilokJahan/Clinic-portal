@@ -8,6 +8,7 @@ import psycopg
 
 from app.metrics import STREAM_CLIENTS
 from app.models import QueueEntry, QueueLab, TriageRecord
+from app.reschedule import OFFER_PENDING
 
 TRIAGE_COLUMNS = """
     t.id, t.appointment_id, t.ai_urgency, t.final_urgency,
@@ -43,7 +44,12 @@ QUEUE_SQL = f"""
                'report_id', l.id, 'status', l.status, 'urgency', l.lab_urgency,
                'reason', l.reason,
                'explanation_approved', l.explanation_approved_at IS NOT NULL) END AS lab,
-           {EFFECTIVE_URGENCY} AS urgency
+           {EFFECTIVE_URGENCY} AS urgency,
+           coalesce(
+               a.status = 'booked' AND s.starts_at > now() + interval '24 hours'
+               AND ({EFFECTIVE_URGENCY}) = 'urgent' AND NOT {OFFER_PENDING},
+               false) AS needs_earlier_visit,
+           {OFFER_PENDING} AS offer_pending
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN providers p ON p.id = s.provider_id
@@ -78,6 +84,8 @@ def to_entry(row: dict[str, Any]) -> QueueEntry:
         triage=TriageRecord.model_validate(triage) if triage and triage.get("id") else None,
         lab=QueueLab.model_validate(row["lab"]) if row.get("lab") else None,
         urgency=row.get("urgency"),
+        needs_earlier_visit=bool(row.get("needs_earlier_visit")),
+        offer_pending=bool(row.get("offer_pending")),
     )
 
 

@@ -3,7 +3,8 @@
 Source of truth: [`services/appointment-service/db/schema.sql`](../services/appointment-service/db/schema.sql)
 and the migrations [`schemav2_lab_results.sql`](../services/appointment-service/db/schemav2_lab_results.sql) (lab reports)
 and [`schemav3_lab_tech.sql`](../services/appointment-service/db/schemav3_lab_tech.sql) (the `lab_tech` role)
-and [`schemav4_lab_uploaded_by.sql`](../services/appointment-service/db/schemav4_lab_uploaded_by.sql) (who uploaded a report).
+and [`schemav4_lab_uploaded_by.sql`](../services/appointment-service/db/schemav4_lab_uploaded_by.sql) (who uploaded a report)
+and [`schemav5_reschedule.sql`](../services/appointment-service/db/schemav5_reschedule.sql) (earlier-visit offers).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid
@@ -14,6 +15,8 @@ erDiagram
     slots ||--o{ appointments : "at most one not cancelled"
     appointments ||--o{ triage_results : has
     appointments ||--o{ lab_reports : "has (uploaded by the patient or a lab tech)"
+    appointments ||--o{ reschedule_offers : "may be offered an earlier slot"
+    slots ||--o{ reschedule_offers : "proposed"
     lab_reports ||--o{ lab_results : contains
 
     users {
@@ -56,6 +59,16 @@ erDiagram
         integer latency_ms
         integer tokens_used
         timestamptz created_at
+    }
+    reschedule_offers {
+        bigint id PK
+        bigint appointment_id FK
+        bigint proposed_slot_id FK
+        bigint offered_by FK "the clinician"
+        text reason "for the care team; never shown to the patient"
+        text status "pending | accepted | declined | expired"
+        timestamptz created_at
+        timestamptz responded_at
     }
     lab_reports {
         bigint id PK
