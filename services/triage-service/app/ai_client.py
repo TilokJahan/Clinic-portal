@@ -10,11 +10,27 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.models import TriageResult
+from app.models import TriageResult, Urgency
 from app.parsing import parse_llm_output
 from app.prompts import SYSTEM_PROMPT, build_user_prompt
 
 logger = logging.getLogger("triage.ai")
+
+CONTENT_FILTER_RESULT = TriageResult(
+    urgency=Urgency.URGENT,
+    suggested_specialty="General Practice",
+    red_flags=["AI safety filter blocked this message"],
+    summary=(
+        "Automatic triage was blocked by the AI safety filter, which often means self-harm or "
+        "violence is mentioned. Review this intake now."
+    ),
+)
+
+
+def _is_content_filter(exc: Exception) -> bool:
+    body = getattr(exc, "body", None)
+    return isinstance(body, dict) and body.get("code") == "content_filter"
+
 
 API_VERSION = "2025-04-01-preview"  # needed for gpt-5 reasoning models
 
@@ -103,6 +119,11 @@ class AITriageClient:
         try:
             reply = self._generate(SYSTEM_PROMPT, build_user_prompt(redacted_text))
         except Exception as exc:  # network, quota, auth, content filter: never fail the intake
+            if _is_content_filter(exc):
+                # The safety filter refuses text about self-harm or violence: exactly the
+                # messages a clinician must see first. Never let that look like "soon".
+                logger.warning("AI call blocked by the content filter, using urgent fallback")
+                return ClientReply(CONTENT_FILTER_RESULT, None, "content_filter")
             logger.warning("AI call failed (%s), using fallback", type(exc).__name__)
             return ClientReply(parse_llm_output("").result, None, "model_error")
         outcome = parse_llm_output(reply.text)
