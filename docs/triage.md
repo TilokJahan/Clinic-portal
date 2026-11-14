@@ -171,3 +171,78 @@ AZURE_OPENAI_ENDPOINT=$(terraform -chdir=../../infra/terraform output -raw opena
 
 It prints expected vs actual urgency per case and exits non-zero if any `urgent` case is scored
 lower. Run it after any prompt or model change.
+
+## Urgency matrix
+
+One table decides priority everywhere: the order of the clinician queue, the emergency notice the
+patient sees, and how soon a patient may choose to come in. It lives in
+`services/appointment-service/app/urgency.py`, the API serves it at `GET /urgency-matrix`, and
+the app shows it on the **How priority works** page.
+
+| Priority | Be seen | Symptom signals | Lab signals |
+|---|---|---|---|
+| Urgent | Within 24 hours | A red-flag rule matches (chest pain, trouble breathing, stroke signs, fainting, severe bleeding, allergic swelling, worst-ever headache, self-harm risk); the AI says urgent; the AI's content filter refused the message | Any critical value |
+| Soon | Within 3 days | The AI says new, worsening or needs a check this week; the AI could not be reached | Any value out of range; a report that could not be read |
+| Routine | Within 2 weeks | The AI says mild, stable or long-standing | All values in range |
+
+How the signals combine:
+
+1. The priority is the **higher** of the symptom priority and the lab priority. With no intake
+   or no lab yet, the other one decides.
+2. Fixed rules decide red flags and critical lab values. The AI can raise a priority but never
+   lower one set by a rule.
+3. A clinician reviews every AI suggestion. A clinician's decision made after the latest lab
+   result is final (`EFFECTIVE_URGENCY` in `app/queue.py`).
+4. Patients choose when to come in, but only within their priority's timeframe: an urgent
+   patient can only pick a time in the next 24 hours. Nothing moves until the patient accepts.
+
+### Choosing a time
+
+- **Booking:** the patient picks a timeframe (24 hours, 3 days, 1 week, 2 weeks). The earliest
+  free time is proposed and they press **Accept this schedule**, or pick another time.
+- **After the intake:** the result screen shows their priority and the timeframes it allows
+  (longer ones are greyed out), whether their current visit already fits, and the free times. They
+  accept one or keep their current time.
+- **Later:** **Change the time** on the home page opens the same chooser.
+- **Clinician offers:** for an urgent patient whose visit is more than 24 hours away, the queue
+  shows "needs earlier visit" and the clinician can offer an earlier slot; the patient accepts it
+  or keeps their time.
+
+When a lab result makes a patient urgent before a clinician has approved the explanation, the
+patient isn't shown the result. Their screen only says the care team would like to see them
+within 24 hours.
+
+### When nothing is free in time
+
+The patient never hits a dead end:
+
+- The first free time **after** the timeframe is offered ("Earliest available, later than
+  recommended"), as long as it is sooner than their current visit. The server accepts any time
+  that is within the limit *or* earlier than the current visit.
+- An **urgent** patient is told not to wait: go to urgent care or call the clinic, and call the
+  emergency number if it may be an emergency.
+- The clinician queue flags every visit later than its priority allows (urgent more than 24 hours
+  away, soon more than 3 days) as **needs earlier visit**, so a clinician can offer a time or call.
+- Booking by timeframe shows the next free time after the timeframe instead of an empty list.
+
+### Urgent reserve
+
+Each doctor keeps **one 30-minute slot a day** free for urgent patients, **at a different time
+for each doctor**, and the time moves on by one slot each day. Urgent patients then have a choice
+of times across the morning rather than one crowded slot. With three doctors on one day, for
+example, the reserves might be at 9:30, 10:00 and 10:30. The rule is `is_urgent_reserve()` in
+`schemav6_urgent_reserve.sql`, used by that migration and `seed.sql`; the result is stored in
+`slots.reserved_for_urgent`.
+
+| Who | Sees and can take the reserve? |
+|---|---|
+| Ordinary booking (`/slots`, `/slots/earliest`, `POST /appointments`) | Only on the slot's own day, and only while no urgent patient is waiting |
+| A patient whose priority is urgent (schedule options, reschedule) | Yes, marked "Kept for urgent care" |
+| A clinician offering an earlier visit | Yes |
+
+Urgent patients come first. Before its day, the reserve is only for urgent patients and
+clinician offers. On its own day (clinic time, US Eastern) ordinary patients can fill it, but only
+while **no urgent patient is waiting**, meaning nobody whose priority is urgent has a visit more
+than 24 hours away. As soon as one is, the reserve is held for them again. A reserve nobody urgent
+needs isn't wasted, and an urgent patient can always be given a visit. The rule is `OPEN_TO_ALL`
+in `app/urgency.py`.

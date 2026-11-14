@@ -21,6 +21,7 @@ from app.models import (
     RescheduleOfferCreate,
     Slot,
 )
+from app.urgency import OPEN_TO_ALL
 
 router = APIRouter()
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
@@ -99,11 +100,15 @@ def _booked_appointment(conn: psycopg.Connection, appointment_id: int) -> dict:
 
 @router.get("/appointments/{appointment_id}/earlier-slots")
 def earlier_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
-    """Free, upcoming slots with the same provider that start before this visit (at most 10)."""
+    """Free, upcoming slots with the same provider that start before this visit (at most 10).
+
+    Includes the urgent reserve: offering it to an urgent patient is what it is for.
+    """
     current = _booked_appointment(conn, appointment_id)
     rows = conn.execute(
-        """
-        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at
+        f"""
+        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at,
+               NOT {OPEN_TO_ALL} AS reserved
         FROM slots s
         JOIN providers p ON p.id = s.provider_id
         LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
@@ -173,6 +178,36 @@ def offer_earlier_visit(
     return RescheduleOffer(**row, provider_name=slot["provider_name"], starts_at=slot["starts_at"])
 
 
+def move_booking(conn: psycopg.Connection, patient_id: int, old_id: int, slot_id: int) -> int:
+    """Book slot_id for the patient, move the intake and lab reports over, cancel old_id.
+
+    Call it inside a transaction that has locked the old appointment. Returns the new
+    appointment's id. Raises UniqueViolation if the slot is taken; the insert runs in a savepoint,
+    so the caller's transaction is still usable afterwards.
+    """
+    with conn.transaction():
+        new_id = conn.execute(
+            "INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s) RETURNING id",
+            (patient_id, slot_id),
+        ).fetchone()["id"]
+    # The intake and lab reports follow the patient, or they'd stay on the cancelled booking
+    # and drop out of the queue, which only lists booked and checked-in visits
+    conn.execute(
+        "UPDATE triage_results SET appointment_id = %s WHERE appointment_id = %s", (new_id, old_id)
+    )
+    conn.execute(
+        "UPDATE lab_reports SET appointment_id = %s WHERE appointment_id = %s", (new_id, old_id)
+    )
+    # Offers for the old visit can't be used any more (the caller may then mark one accepted)
+    conn.execute(
+        "UPDATE reschedule_offers SET status = 'expired', responded_at = now() "
+        "WHERE appointment_id = %s AND status = 'pending'",
+        (old_id,),
+    )
+    conn.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s", (old_id,))
+    return new_id
+
+
 def _accept(conn: psycopg.Connection, patient_id: int, offer_id: int) -> int | str:
     """Move the patient to the offered slot. Returns the new appointment's id, or the reason the
     offer can't be accepted (the caller answers 409; the offer is marked expired if it lapsed)."""
@@ -203,12 +238,9 @@ def _accept(conn: psycopg.Connection, patient_id: int, offer_id: int) -> int | s
             lapsed = "That time has already started"
         else:
             try:
-                with conn.transaction():
-                    new_id = conn.execute(
-                        "INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s) "
-                        "RETURNING id",
-                        (patient_id, offer["proposed_slot_id"]),
-                    ).fetchone()["id"]
+                new_id = move_booking(
+                    conn, patient_id, offer["appointment_id"], offer["proposed_slot_id"]
+                )
             except errors.UniqueViolation:  # someone else got the slot first
                 lapsed = "That time was just taken"
         if lapsed:
@@ -219,18 +251,6 @@ def _accept(conn: psycopg.Connection, patient_id: int, offer_id: int) -> int | s
             )
             return lapsed
 
-        old_id = offer["appointment_id"]
-        # The intake and lab reports follow the patient, or they'd stay on the cancelled booking
-        # and drop out of the queue, which only lists booked and checked-in visits
-        conn.execute(
-            "UPDATE triage_results SET appointment_id = %s WHERE appointment_id = %s",
-            (new_id, old_id),
-        )
-        conn.execute(
-            "UPDATE lab_reports SET appointment_id = %s WHERE appointment_id = %s",
-            (new_id, old_id),
-        )
-        conn.execute("UPDATE appointments SET status = 'cancelled' WHERE id = %s", (old_id,))
         conn.execute(
             "UPDATE reschedule_offers SET status = 'accepted', responded_at = now() WHERE id = %s",
             (offer_id,),

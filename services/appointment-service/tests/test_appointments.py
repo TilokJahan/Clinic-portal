@@ -50,6 +50,7 @@ def test_slots_for_a_day(client, data):
         "specialty": "General Practice",
         "starts_at": "2030-01-07T09:00:00Z",
         "ends_at": "2030-01-07T09:30:00Z",
+        "reserved": False,
     }
 
 

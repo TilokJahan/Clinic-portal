@@ -1532,3 +1532,60 @@ a.patient-footer-item:hover > span > span { color: var(--teal-deep); text-decora
   .lab-worklist-controls .search-box { width: 100%; margin-left: 0; }
   .lab-upload-copy { min-width: 0; }
 }
+
+/* --- Urgency matrix and choosing when to be seen --- */
+.matrix-panel { margin-bottom: 18px; padding: 22px; }
+.matrix-panel h2 { margin: 0 0 14px; color: var(--ink); font: 700 18px Manrope, sans-serif; }
+.matrix-table { display: grid; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.matrix-row { display: grid; grid-template-columns: 110px 120px 1.4fr 1fr 1.2fr; gap: 14px; padding: 14px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.55; color: var(--ink-soft); }
+.matrix-row ul { margin: 0; padding-left: 16px; }
+.matrix-row b { color: var(--ink); }
+.matrix-head { border-top: 0; background: var(--sky-pale); color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; }
+.matrix-head span { display: flex; align-items: center; gap: 5px; }
+.matrix-row.level-urgent { box-shadow: inset 4px 0 #cd6d5b; }
+.matrix-row.level-soon { box-shadow: inset 4px 0 #bd8a3f; }
+.matrix-row.level-routine { box-shadow: inset 4px 0 #528b69; }
+.matrix-grid { width: 100%; border-collapse: collapse; font-size: 12px; }
+.matrix-grid th, .matrix-grid td { padding: 10px; border: 1px solid var(--line); text-align: center; color: var(--ink-soft); }
+.matrix-grid thead th, .matrix-grid tbody th { background: var(--sky-pale); font-weight: 700; }
+.matrix-rules { margin: 0 0 16px; padding-left: 20px; color: var(--ink-soft); font-size: 13px; line-height: 1.7; }
+.timeframe-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.timeframe-chips .review-choice { text-transform: none; }
+.timeframe-chips .review-choice:disabled { opacity: .4; cursor: not-allowed; text-decoration: line-through; }
+.slot-options { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.slot-option { position: relative; height: auto; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 8px; }
+.slot-option em { position: absolute; top: -8px; right: 8px; padding: 1px 6px; color: #fff; background: var(--teal); border-radius: 5px; font-size: 9px; font-style: normal; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+.schedule-note { display: flex; gap: 9px; align-items: flex-start; margin-bottom: 16px; padding: 12px; color: var(--ink-soft); background: var(--sky-pale); border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.schedule-note svg { flex: none; margin-top: 3px; color: #0876b9; }
+.schedule-note p { margin: 0; }
+.schedule-note a { color: #0876b9; font-weight: 700; text-decoration: none; }
+.schedule-current { margin: 0 0 16px; color: var(--ink-soft); font-size: 13px; }
+.fits-tag { display: inline-block; white-space: nowrap; margin-left: 6px; padding: 2px 7px; color: #528b69; background: #eaf4ed; border-radius: 10px; font-size: 11px; font-weight: 700; }
+.fits-tag.late { color: #bd8a3f; background: #fff7e8; }
+.schedule-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
+.schedule-done { display: flex; gap: 10px; align-items: flex-start; padding: 14px; color: #3f7a57; background: #eaf4ed; border-radius: 9px; font-size: 13px; }
+.schedule-done svg { flex: none; margin-top: 2px; }
+.schedule-done div { display: flex; flex-direction: column; gap: 4px; }
+.link-button { align-self: flex-start; padding: 0; color: #0876b9; background: none; border: 0; font-size: 12px; font-weight: 700; cursor: pointer; }
+.schedule-home { margin-top: 18px; }
+.schedule-pick { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.offer-card { display: flex; gap: 16px; margin-bottom: 18px; padding: 20px; border-color: #b7d9ec; }
+.offer-card h3 { margin: 0 0 6px; color: var(--ink); font: 700 16px Manrope, sans-serif; }
+.offer-card p { margin: 0 0 14px; color: var(--ink-soft); font-size: 13px; }
+.offer-card .schedule-actions { justify-content: flex-start; }
+.booking-mode { margin-bottom: 20px; }
+.review-tag.earlier { color: #cd6d5b; }
+@media (max-width: 900px) {
+  .matrix-head { display: none; }
+  .matrix-row { grid-template-columns: 1fr; gap: 6px; }
+  .matrix-grid { font-size: 11px; }
+  .matrix-grid th, .matrix-grid td { padding: 6px 4px; }
+}
+.slot-option.reserved { border-style: dashed; }
+.reserve-tag { color: #cd6d5b; font-weight: 700; }
+.nothing-in-time { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.nothing-in-time p { margin: 0; }
+.nothing-in-time .slot-grid { margin-bottom: 0; }
+.urgent-help { display: flex; flex-direction: column; gap: 6px; padding: 14px; color: #a76253; background: #fff7f4; border: 1px solid #f4e5de; border-radius: 9px; font-size: 13px; line-height: 1.55; }
+.urgent-help a, .schedule-warning a, .nothing-in-time a { color: #0876b9; font-weight: 700; }
+.schedule-warning { padding: 12px; color: #8a6a32; background: #fff7e8; border-radius: 8px; font-size: 13px; line-height: 1.55; }

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import db, labs, metrics, reschedule
+from app import db, labs, metrics, reschedule, scheduling
 from app.auth import (
     AnyUser,
     Clinician,
@@ -37,6 +37,7 @@ from app.models import (
 from app.queue import TRIAGE_COLUMNS, load_queue, queue_events
 from app.reschedule import load_my_appointments
 from app.triage import TriageServiceClient, get_triage_client
+from app.urgency import OPEN_TO_ALL, RESERVED_MESSAGE
 
 
 @asynccontextmanager
@@ -50,6 +51,7 @@ app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
 app.include_router(labs.router)
 app.include_router(reschedule.router)
+app.include_router(scheduling.router)
 
 # Only needed if the frontend is ever served from another origin (compose, kind and AKS are all
 # same-origin through nginx). List allowed origins, comma separated, in CORS_ALLOWED_ORIGINS.
@@ -114,18 +116,19 @@ def list_slots(
 ) -> list[Slot]:
     """Free, upcoming slots that start on the given day, earliest first.
 
-    A slot is free if it has no appointment, or only cancelled ones.
+    A slot is free if it has no appointment, or only cancelled ones. The urgent reserve is only
+    listed on its own day while no urgent patient is waiting (see app/urgency.py).
     """
     start = datetime.combine(day, time.min, tzinfo=UTC)
     rows = conn.execute(
-        """
+        f"""
         SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at
         FROM slots s
         JOIN providers p ON p.id = s.provider_id
         LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
         WHERE a.id IS NULL
           AND s.starts_at >= %(start)s AND s.starts_at < %(end)s
-          AND s.starts_at > now()
+          AND s.starts_at > now() AND {OPEN_TO_ALL}
           AND (%(provider_id)s::bigint IS NULL OR s.provider_id = %(provider_id)s)
         ORDER BY s.starts_at, s.provider_id
         """,
@@ -146,13 +149,17 @@ def book_appointment(conn: Conn, user: Patient, body: AppointmentCreate) -> Appo
     try:
         with conn.transaction():
             slot = conn.execute(
-                "SELECT starts_at > now() AS upcoming FROM slots WHERE id = %s", (body.slot_id,)
+                f"SELECT s.starts_at > now() AS upcoming, {OPEN_TO_ALL} AS open "
+                "FROM slots s WHERE s.id = %s",
+                (body.slot_id,),
             ).fetchone()
             if slot is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
             if not slot["upcoming"]:
                 metrics.BOOKING_CONFLICTS.labels("started").inc()
                 raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
+            if not slot["open"]:
+                raise HTTPException(status.HTTP_409_CONFLICT, RESERVED_MESSAGE)
             row = conn.execute(
                 """
                 INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s)

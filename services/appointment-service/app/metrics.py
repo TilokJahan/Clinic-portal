@@ -34,6 +34,9 @@ REVIEWS = Counter("triage_reviews_total", "Clinician decisions", ["outcome"])  #
 RESCHEDULE_OFFERS = Counter(
     "reschedule_offers_total", "Earlier-visit offers, by outcome", ["outcome"]
 )  # offered / accepted / declined / expired
+PATIENT_RESCHEDULES = Counter(
+    "patient_reschedules_total", "Visits a patient moved to a time they chose in their timeframe"
+)
 STREAM_CLIENTS = Gauge("queue_stream_clients", "Open GET /queue/stream connections")
 LAB_UPLOADS = Counter(
     "lab_uploads_total",

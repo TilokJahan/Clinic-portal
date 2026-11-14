@@ -18,6 +18,8 @@ class Slot(BaseModel):
     specialty: str
     starts_at: datetime
     ends_at: datetime
+    # Held for urgent patients (the urgent reserve); only listed to urgent patients and clinicians
+    reserved: bool = False
 
 
 class AppointmentCreate(BaseModel):
@@ -94,7 +96,8 @@ class QueueEntry(BaseModel):
     # What the queue sorts by: the higher of symptom and lab urgency, unless a clinician has
     # decided after the latest lab result came in (then their decision)
     urgency: Urgency | None = None
-    # Urgent, booked more than 24 hours from now, and no open offer: offer an earlier visit
+    # Later than the priority allows (urgent: 24 hours, soon: 3 days) and no open offer: offer an
+    # earlier visit or call the patient
     needs_earlier_visit: bool = False
     # An earlier visit has been offered and the patient hasn't answered yet
     offer_pending: bool = False
@@ -172,3 +175,49 @@ class RescheduleOffer(BaseModel):
 class OfferResult(BaseModel):
     id: int
     status: str
+
+
+class Timeframe(BaseModel):
+    hours: int
+    label: str
+
+
+class UrgencyLevel(BaseModel):
+    """One row of the urgency matrix (see app/urgency.py)."""
+
+    urgency: Urgency
+    seen_within_hours: int
+    seen_within: str
+    symptom_signals: list[str]
+    lab_signals: list[str]
+    action: str
+
+
+class UrgencyMatrix(BaseModel):
+    levels: list[UrgencyLevel]
+    rules: list[str]
+    timeframes: list[Timeframe]
+
+
+class ScheduleOptions(BaseModel):
+    """Times a patient can move their visit to, within the timeframe they chose."""
+
+    appointment_id: int
+    starts_at: datetime
+    # The symptom priority the patient was shown after their intake (None before an intake)
+    priority: Urgency | None
+    # The latest they may choose. Can be stricter than their own priority when the care team
+    # (a lab result or a clinician's review) needs them sooner; care_team_limit says so.
+    max_within_hours: int
+    care_team_limit: bool
+    within_hours: int
+    # True when the current visit already falls inside the chosen timeframe
+    current_fits: bool
+    slots: list[Slot]
+    # When nothing is free in the timeframe: the first free time after it, or None if there is
+    # none at all. The patient may take it if it is earlier than their current visit.
+    next_available: Slot | None = None
+
+
+class RescheduleRequest(BaseModel):
+    slot_id: int = Field(gt=0)

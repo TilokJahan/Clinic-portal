@@ -7,8 +7,9 @@ from typing import Any
 import psycopg
 
 from app.metrics import STREAM_CLIENTS
-from app.models import QueueEntry, QueueLab, TriageRecord
+from app.models import QueueEntry, QueueLab, TriageRecord, Urgency
 from app.reschedule import OFFER_PENDING
+from app.urgency import EFFECTIVE_URGENCY, SEEN_WITHIN_HOURS
 
 TRIAGE_COLUMNS = """
     t.id, t.appointment_id, t.ai_urgency, t.final_urgency,
@@ -16,22 +17,14 @@ TRIAGE_COLUMNS = """
     t.red_flags, t.summary, t.latency_ms, t.tokens_used, t.created_at, t.reviewed_at
 """
 
-RANK = "CASE {} WHEN 'urgent' THEN 2 WHEN 'soon' THEN 1 WHEN 'routine' THEN 0 END"
-
-# The urgency the queue shows and sorts by: the higher of the symptom triage (clinician's final
-# choice or the AI's) and the lab urgency. A clinician who reviews after the latest lab result
-# came in has the final say. A critical lab value can never be hidden by an older decision.
-EFFECTIVE_URGENCY = f"""
-    CASE
-        WHEN t.reviewed_at IS NOT NULL
-             AND (l.processed_at IS NULL OR t.reviewed_at >= l.processed_at)
-            THEN t.final_urgency
-        WHEN coalesce({RANK.format("coalesce(t.final_urgency, t.ai_urgency)")}, -1)
-             >= coalesce({RANK.format("l.lab_urgency")}, -1)
-            THEN coalesce(t.final_urgency, t.ai_urgency)
-        ELSE l.lab_urgency
-    END
-"""
+# The latest an urgent or soon visit should happen. Visits further away than this are flagged so
+# a clinician can offer an earlier time or call the patient, for example when no time was free
+# within the limit. Routine visits booked far ahead are the patient's choice and aren't flagged.
+LATEST_VISIT = (
+    "CASE {} "
+    f"WHEN 'urgent' THEN interval '{SEEN_WITHIN_HOURS[Urgency.URGENT]} hours' "
+    f"WHEN 'soon' THEN interval '{SEEN_WITHIN_HOURS[Urgency.SOON]} hours' END"
+)
 
 # Waiting patients (booked or checked in). Most urgent first; within the same urgency, whoever
 # sent their intake or lab report first; patients with neither go last, by appointment time.
@@ -46,8 +39,9 @@ QUEUE_SQL = f"""
                'explanation_approved', l.explanation_approved_at IS NOT NULL) END AS lab,
            {EFFECTIVE_URGENCY} AS urgency,
            coalesce(
-               a.status = 'booked' AND s.starts_at > now() + interval '24 hours'
-               AND ({EFFECTIVE_URGENCY}) = 'urgent' AND NOT {OFFER_PENDING},
+               a.status = 'booked'
+               AND s.starts_at > now() + ({LATEST_VISIT.format(EFFECTIVE_URGENCY)})
+               AND NOT {OFFER_PENDING},
                false) AS needs_earlier_visit,
            {OFFER_PENDING} AS offer_pending
     FROM appointments a
