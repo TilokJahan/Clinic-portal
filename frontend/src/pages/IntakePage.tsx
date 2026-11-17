@@ -56,10 +56,10 @@ export function IntakePage() {
     </div>
     <div className="panel form-panel">
       <div className="form-step"><span>NEXT</span><div><h2>Choose when to come in</h2><p>Pick a timeframe, then accept a time. Your priority sets how soon you should be seen.</p></div></div>
-      <ScheduleChooser appointmentId={result.appointment_id} />
+      <ScheduleChooser appointmentId={result.appointment_id ?? appointmentId} />
       <NavLink to="/" className="button button-secondary schedule-home">Back to home <ArrowRight size={16} /></NavLink>
     </div>
-    <PatientLabCard appointmentId={result.appointment_id} /></>
+    <PatientLabCard appointmentId={result.appointment_id ?? appointmentId} /></>
 
   if (bookings === null) return <>{header}<div className="panel form-panel empty-state"><Loader2 className="spin" size={18} /> Loading your appointments…</div></>
 

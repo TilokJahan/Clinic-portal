@@ -206,15 +206,27 @@ def test_a_clinician_offers_an_earlier_slot(client, world):
 @pytest.mark.parametrize(
     ("slot", "code", "detail"),
     [
-        (LATER, 422, "The slot must be earlier than the current visit"),
-        (S1, 422, "The slot must be earlier than the current visit"),
+        (S1, 409, "Slot is already booked"),  # the patient's own current slot
         (PAST, 409, "Slot has already started"),
         (999, 404, "Slot not found"),
     ],
 )
-def test_the_slot_must_exist_be_upcoming_and_earlier(client, world, slot, code, detail):
+def test_the_slot_must_exist_be_upcoming_and_free(client, world, slot, code, detail):
     response = _offer(client, slot=slot)
     assert (response.status_code, response.json()["detail"]) == (code, detail)
+
+
+def test_a_later_time_can_be_proposed_while_it_fits_the_priority(client, world):
+    # No priority yet: anything within two weeks fits, even later than the current visit
+    assert _offer(client, slot=LATER).status_code == 201
+
+
+def test_a_time_past_the_priority_limit_cannot_be_proposed(client, world):
+    _urgent_lab(world)  # urgent: within 24 hours, or at least earlier than the current visit
+    response = _offer(client, slot=LATER)
+    assert response.status_code == 422
+    assert response.json()["detail"] == "That time is later than the patient's priority allows"
+    assert _offer(client, slot=E3).status_code == 201  # 30 hours: late, but earlier than now
 
 
 def test_a_booked_slot_cannot_be_offered(client, world):
@@ -223,12 +235,67 @@ def test_a_booked_slot_cannot_be_offered(client, world):
     assert response.status_code == 409 and response.json()["detail"] == "Slot is already booked"
 
 
-def test_only_one_offer_can_be_open_at_a_time(client, world):
-    assert _offer(client).status_code == 201
-    response = _offer(client, slot=E2)
-    assert (
-        response.status_code == 409 and response.json()["detail"] == "An offer is already pending"
+def test_new_proposals_replace_the_open_ones(client, world):
+    first = _offer(client).json()["id"]
+    assert _offer(client, slot=E2).status_code == 201
+    assert _offer_status(world, first) == "expired"
+    [mine] = client.get("/appointments", headers=PATIENT).json()
+    assert [o["slot_id"] for o in mine["pending_offers"]] == [E2]
+
+
+def _propose(client, slot_ids, appointment=OLD):
+    return client.post(
+        f"/appointments/{appointment}/proposals", json={"slot_ids": slot_ids}, headers=CLINICIAN
     )
+
+
+def test_up_to_three_times_can_be_proposed_and_the_patient_sees_them_all(client, world):
+    response = _propose(client, [E2, E1, OTHER_PROVIDER])
+    assert response.status_code == 201 and len(response.json()) == 3
+    [mine] = client.get("/appointments", headers=PATIENT).json()
+    # Soonest first; pending_offer is the first, for older clients
+    starts = [o["starts_at"] for o in mine["pending_offers"]]
+    assert starts == sorted(starts) and len(starts) == 3
+    assert mine["pending_offer"] == mine["pending_offers"][0]
+    assert _propose(client, [E1, E2, E3, OTHER_PROVIDER]).status_code == 422
+    assert _propose(client, [E1, E1]).status_code == 422
+    assert _propose(client, []).status_code == 422
+
+
+def test_accepting_one_proposal_expires_the_others(client, world):
+    offers = _propose(client, [E1, E2]).json()
+    accepted = _accept(client, offers[1]["id"])
+    assert accepted.status_code == 200 and accepted.json()["slot_id"] == E2
+    assert _offer_status(world, offers[0]["id"]) == "expired"
+
+
+def test_none_of_these_work_declines_all_with_a_note_for_the_clinician(client, world):
+    offers = _propose(client, [E1, E2]).json()
+    response = client.post(
+        f"/reschedule-offers/{offers[0]['id']}/decline",
+        json={"note": " Mornings don't work, I work until noon. "},
+        headers=PATIENT,
+    )
+    assert response.status_code == 200
+    assert {_offer_status(world, o["id"]) for o in offers} == {"declined"}
+    entry = _entry(client)
+    assert entry["offer_declined_note"] == "Mornings don't work, I work until noon."
+    assert entry["offer_pending"] is False
+    # New proposals clear the note
+    _propose(client, [E3])
+    assert _entry(client)["offer_declined_note"] is None
+
+
+def test_alternative_slots_follow_the_priority_limit(client, world):
+    def ids():
+        response = client.get(f"/appointments/{OLD}/alternative-slots", headers=CLINICIAN)
+        assert response.status_code == 200
+        return [s["id"] for s in response.json()]
+
+    assert LATER in ids() and OTHER_PROVIDER in ids()  # no priority yet: two weeks, any doctor
+    _urgent_lab(world)
+    # Urgent: within 24 hours, or earlier than the current visit (3 days away)
+    assert ids() == [E1, OTHER_PROVIDER, E2, E3]
 
 
 def test_a_lapsed_offer_does_not_block_a_new_one(client, world):

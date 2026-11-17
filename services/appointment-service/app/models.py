@@ -20,14 +20,25 @@ class Slot(BaseModel):
     ends_at: datetime
     # Held for urgent patients (the urgent reserve); only listed to urgent patients and clinicians
     reserved: bool = False
+    # False for a time that is already booked (or kept for urgent care), when a day is listed
+    # with include_booked: shown, but can't be chosen
+    available: bool = True
 
 
 class AppointmentCreate(BaseModel):
     # The patient comes from the sign-in token, never from the body.
     slot_id: int = Field(gt=0)
-    # What brings the patient in. Sent to the triage service with the request, so the clinician
-    # can approve it; never stored. Without it the request waits until POST /intake.
+    # The patient's own assessment from POST /assessments (symptoms first). Its urgency limits
+    # which times may be requested, and it is linked to the new appointment.
+    assessment_id: int | None = Field(default=None, gt=0)
+    # Or the symptoms themselves, assessed with the request; never stored. With neither, the
+    # request waits until POST /intake.
     symptoms: str | None = Field(default=None, min_length=1, max_length=4000)
+
+
+class AssessmentCreate(BaseModel):
+    # Sent on to the triage service (which redacts it) and never stored here.
+    symptoms: str = Field(min_length=1, max_length=4000)
 
 
 class Appointment(BaseModel):
@@ -66,7 +77,8 @@ class TriageAssessment(BaseModel):
 
 class TriageRecord(BaseModel):
     id: int
-    appointment_id: int
+    # None for an assessment that isn't linked to a booking yet
+    appointment_id: int | None
     ai_urgency: Urgency
     final_urgency: Urgency | None
     # final_urgency once a clinician has reviewed, otherwise ai_urgency
@@ -79,6 +91,15 @@ class TriageRecord(BaseModel):
     tokens_used: int | None = None
     created_at: datetime
     reviewed_at: datetime | None
+
+
+class Assessment(BaseModel):
+    """The result of describing symptoms before booking, and what it allows."""
+
+    triage: TriageRecord
+    # The latest a visit should be: the patient may only request times within this many hours,
+    # unless nothing at all is free that soon
+    max_within_hours: int
 
 
 class TriageReview(BaseModel):
@@ -108,6 +129,8 @@ class QueueEntry(BaseModel):
     offer_pending: bool = False
     # A booking request no clinician has approved yet
     awaiting_approval: bool = False
+    # The patient said none of the proposed times work, and why (until new times are proposed)
+    offer_declined_note: str | None = None
 
 
 class QueueLab(BaseModel):
@@ -161,12 +184,16 @@ class MyAppointment(BaseModel):
     # The care team declined the request (status is then "cancelled"); the reason, if they gave one
     declined: bool = False
     decline_reason: str | None = None
-    # An earlier slot the patient can accept or decline; None if there is no open offer
+    # Times the care team proposed (at most three); the patient accepts one or declines them all
+    pending_offers: list[PendingOffer] = []
+    # The first of them, for older clients
     pending_offer: PendingOffer | None = None
 
 
 class RescheduleOfferCreate(BaseModel):
-    slot_id: int = Field(gt=0)
+    # One time, or up to three for the patient to choose from
+    slot_id: int | None = Field(default=None, gt=0)
+    slot_ids: list[int] | None = Field(default=None, min_length=1, max_length=3)
     # For the care team only; never shown to the patient
     reason: str | None = Field(default=None, max_length=500)
 
@@ -197,6 +224,18 @@ class OfferResult(BaseModel):
 class Timeframe(BaseModel):
     hours: int
     label: str
+
+
+class TimeframeAvailability(Timeframe):
+    # Free times inside the timeframe (0: the button is shown disabled)
+    free: int
+    # False when the patient's urgency doesn't allow a timeframe this long
+    allowed: bool = True
+
+
+class OffersDecline(BaseModel):
+    # Why none of the proposed times work. Shown to the clinician.
+    note: str | None = Field(default=None, max_length=500)
 
 
 class UrgencyLevel(BaseModel):

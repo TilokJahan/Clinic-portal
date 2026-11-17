@@ -16,7 +16,15 @@ from psycopg import errors
 
 from app import db, metrics, urgency
 from app.auth import AnyUser, Patient
-from app.models import MyAppointment, RescheduleRequest, ScheduleOptions, Slot, UrgencyMatrix
+from app.models import (
+    MyAppointment,
+    RescheduleRequest,
+    ScheduleOptions,
+    Slot,
+    TimeframeAvailability,
+    Urgency,
+    UrgencyMatrix,
+)
 from app.reschedule import load_my_appointments, move_booking
 from app.urgency import EFFECTIVE_URGENCY
 
@@ -126,6 +134,51 @@ def _limit_message(hours: int) -> str:
     return f"Your care team needs to see you {label.lower()}. Please choose an earlier time."
 
 
+# Shared with POST /appointments in app/main.py
+def free_slots(conn: psycopg.Connection, within_hours: int, limit: int, urgent: bool) -> list[Slot]:
+    return _free_slots(conn, within_hours, limit=limit, urgent=urgent)
+
+
+def limit_message(hours: int) -> str:
+    return _limit_message(hours)
+
+
+@router.get("/slots/timeframes")
+def timeframe_availability(
+    conn: Conn,
+    _: AnyUser,
+    priority: Annotated[
+        Urgency | None, Query(description="The patient's assessed urgency, if known")
+    ] = None,
+) -> list[TimeframeAvailability]:
+    """Each booking timeframe with how many times are free in it, and whether the priority allows
+    it. The booking page greys out a timeframe with nothing free instead of showing an empty list.
+    """
+    limit = urgency.max_within_hours(priority)
+    urgent = priority == Urgency.URGENT
+    counts = conn.execute(
+        f"""
+        SELECT h.hours, count(s.id) AS free
+        FROM unnest(%(hours)s::int[]) AS h(hours)
+        LEFT JOIN slots s ON s.starts_at > now()
+            AND s.starts_at <= now() + make_interval(hours => h.hours)
+            AND (%(urgent)s OR {urgency.OPEN_TO_ALL})
+            AND NOT EXISTS (
+                SELECT 1 FROM appointments a WHERE a.slot_id = s.id AND a.status <> 'cancelled'
+            )
+        GROUP BY h.hours
+        """,
+        {"hours": [t.hours for t in urgency.TIMEFRAMES], "urgent": urgent},
+    ).fetchall()
+    free = {row["hours"]: row["free"] for row in counts}
+    return [
+        TimeframeAvailability(
+            hours=t.hours, label=t.label, free=free.get(t.hours, 0), allowed=t.hours <= limit
+        )
+        for t in urgency.TIMEFRAMES
+    ]
+
+
 @router.get("/urgency-matrix")
 def urgency_matrix(_: AnyUser) -> UrgencyMatrix:
     """How a priority is decided and how soon each priority should be seen."""
@@ -138,10 +191,14 @@ def earliest_slots(
     _: AnyUser,
     within_hours: Annotated[int, Query(description="One of the timeframes, in hours")],
     provider_id: Annotated[int | None, Query(gt=0)] = None,
+    urgent: Annotated[
+        bool, Query(description="An urgent patient: include the urgent reserve")
+    ] = False,
 ) -> list[Slot]:
-    """Free times in the next within_hours, earliest first (at most 12), to book by timeframe."""
+    """Free times in the next within_hours, earliest first (at most 12), to book by timeframe.
+    Booking still checks that an urgent patient's assessment really is urgent."""
     _check_timeframe(within_hours)
-    return _free_slots(conn, within_hours, provider_id)
+    return _free_slots(conn, within_hours, provider_id, urgent=urgent)
 
 
 @router.get("/slots/next-available")
@@ -150,10 +207,13 @@ def next_available(
     _: AnyUser,
     after_hours: Annotated[int, Query(description="One of the timeframes, in hours")],
     provider_id: Annotated[int | None, Query(gt=0)] = None,
+    urgent: Annotated[
+        bool, Query(description="An urgent patient: include the urgent reserve")
+    ] = False,
 ) -> Slot | None:
     """The first free time after a timeframe, for when nothing is free inside it. null if none."""
     _check_timeframe(after_hours)
-    return _next_free_slot(conn, after_hours, provider_id)
+    return _next_free_slot(conn, after_hours, provider_id, urgent=urgent)
 
 
 @router.get("/appointments/{appointment_id}/schedule-options")

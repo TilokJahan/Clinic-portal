@@ -13,6 +13,23 @@ export interface Slot {
   ends_at: string
   /** Kept free for urgent patients (shown only to them and to clinicians) */
   reserved?: boolean
+  /** false for a booked time when a whole day is listed: shown greyed out, can't be chosen */
+  available?: boolean
+}
+
+/** Step 1 of booking: the symptoms' triage, and how soon the patient should be seen */
+export interface Assessment {
+  triage: TriageRecord
+  max_within_hours: number
+}
+
+export interface TimeframeAvailability {
+  hours: number
+  label: string
+  /** Free times inside the timeframe; 0 means the button is greyed out */
+  free: number
+  /** false when the patient's priority doesn't allow a timeframe this long */
+  allowed: boolean
 }
 
 export interface Appointment {
@@ -27,7 +44,8 @@ export interface Appointment {
 
 export interface TriageRecord {
   id: number
-  appointment_id: number
+  /** null for an assessment made before booking, until a time is requested with it */
+  appointment_id: number | null
   ai_urgency: Urgency
   final_urgency: Urgency | null
   urgency: Urgency
@@ -120,6 +138,8 @@ export interface QueueEntry {
   offer_pending?: boolean
   /** A booking request no clinician has approved yet */
   awaiting_approval?: boolean
+  /** The patient said none of the proposed times work ('' when they gave no reason) */
+  offer_declined_note?: string | null
 }
 
 // Every API call resolves to this instead of throwing, so pages can show the server's message.
@@ -151,7 +171,9 @@ export interface MyAppointment {
   /** The care team declined the request (status is then 'cancelled'), with their reason if given */
   declined?: boolean
   decline_reason?: string | null
-  /** An earlier visit the care team offered; the patient accepts or declines it */
+  /** Times the care team proposed (up to three); the patient accepts one or declines them all */
+  pending_offers?: PendingOffer[]
+  /** The first of them */
   pending_offer?: PendingOffer | null
 }
 
@@ -213,10 +235,15 @@ export interface ScheduleOptions {
 }
 
 export interface Api {
-  getSlots(date: string, providerId?: number): Promise<ApiResult<Slot[]>>
+  /** Free times on a day; with includeBooked, every time of the day (booked ones available=false) */
+  getSlots(date: string, providerId?: number, options?: { includeBooked?: boolean; urgent?: boolean }): Promise<ApiResult<Slot[]>>
+  /** Step 1 of booking: describe symptoms, get the priority and how soon to be seen */
+  assess(symptoms: string): Promise<ApiResult<Assessment>>
+  /** Each timeframe with its free times, and whether the priority allows it */
+  timeframeAvailability(priority?: Urgency | null): Promise<ApiResult<TimeframeAvailability[]>>
   /** Requests a time for the signed-in patient (the backend takes the patient from the token).
    *  The symptoms go to triage with it; a clinician then approves the request. */
-  book(slotId: number, symptoms: string): Promise<ApiResult<Appointment>>
+  book(slotId: number, request: { assessmentId?: number; symptoms?: string }): Promise<ApiResult<Appointment>>
   approve(appointmentId: number): Promise<ApiResult<Appointment>>
   decline(appointmentId: number, reason: string): Promise<ApiResult<Appointment>>
   myAppointments(): Promise<ApiResult<MyAppointment[]>>
@@ -238,9 +265,9 @@ export interface Api {
   /** How a priority is decided and how soon each priority should be seen */
   urgencyMatrix(): Promise<ApiResult<UrgencyMatrix>>
   /** Free times in the next withinHours, earliest first (booking by timeframe) */
-  earliestSlots(withinHours: number, providerId?: number): Promise<ApiResult<Slot[]>>
+  earliestSlots(withinHours: number, providerId?: number, urgent?: boolean): Promise<ApiResult<Slot[]>>
   /** The first free time after a timeframe, for when nothing is free inside it (null if none) */
-  nextAvailable(afterHours: number, providerId?: number): Promise<ApiResult<Slot | null>>
+  nextAvailable(afterHours: number, providerId?: number, urgent?: boolean): Promise<ApiResult<Slot | null>>
   /** Times this visit can move to; withinHours defaults to the longest the priority allows */
   scheduleOptions(appointmentId: number, withinHours?: number): Promise<ApiResult<ScheduleOptions>>
   /** The patient accepts a new time; the intake and lab reports move with the visit */
@@ -248,6 +275,11 @@ export interface Api {
   /** Clinician: free earlier slots with the same provider */
   earlierSlots(appointmentId: number): Promise<ApiResult<Slot[]>>
   offerEarlierVisit(appointmentId: number, slotId: number): Promise<ApiResult<RescheduleOffer>>
+  /** Times the clinician may propose: free, any doctor, within the patient's priority */
+  alternativeSlots(appointmentId: number): Promise<ApiResult<Slot[]>>
+  /** Propose one to three times; they replace any proposed before */
+  propose(appointmentId: number, slotIds: number[]): Promise<ApiResult<RescheduleOffer[]>>
   acceptOffer(offerId: number): Promise<ApiResult<MyAppointment>>
-  declineOffer(offerId: number): Promise<ApiResult<{ id: number; status: string }>>
+  /** None of the proposed times work: declines them all, with an optional note for the clinician */
+  declineOffer(offerId: number, note?: string): Promise<ApiResult<{ id: number; status: string }>>
 }

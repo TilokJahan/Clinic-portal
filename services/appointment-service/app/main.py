@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import approval, db, labs, metrics, reschedule, scheduling
+from app import approval, db, labs, metrics, reschedule, scheduling, urgency
 from app.auth import (
     AnyUser,
     Clinician,
@@ -25,6 +25,8 @@ from app.auth import (
 from app.models import (
     Appointment,
     AppointmentCreate,
+    Assessment,
+    AssessmentCreate,
     DevLogin,
     IntakeCreate,
     MyAppointment,
@@ -116,28 +118,56 @@ def list_slots(
     _: AnyUser,
     day: Annotated[date, Query(alias="date", description="Day to search, YYYY-MM-DD (UTC)")],
     provider_id: Annotated[int | None, Query(gt=0)] = None,
+    include_booked: Annotated[
+        bool, Query(description="Also list booked times, with available=false")
+    ] = False,
+    urgent: Annotated[bool, Query(description="List the urgent reserve as available")] = False,
 ) -> list[Slot]:
     """Free, upcoming slots that start on the given day, earliest first.
 
     A slot is free if it has no appointment, or only cancelled ones. The urgent reserve is only
-    listed on its own day while no urgent patient is waiting (see app/urgency.py).
+    listed on its own day while no urgent patient is waiting (see app/urgency.py), or to an
+    urgent patient (booking still checks their assessment). With include_booked, every upcoming
+    slot of the day is listed and the ones that can't be chosen have available=false, so the
+    patient sees the whole day.
     """
     start = datetime.combine(day, time.min, tzinfo=UTC)
     rows = conn.execute(
         f"""
-        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at
+        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at,
+               NOT {OPEN_TO_ALL} AS reserved,
+               a.id IS NULL AND (%(urgent)s OR {OPEN_TO_ALL}) AS available
         FROM slots s
         JOIN providers p ON p.id = s.provider_id
         LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
-        WHERE a.id IS NULL
-          AND s.starts_at >= %(start)s AND s.starts_at < %(end)s
-          AND s.starts_at > now() AND {OPEN_TO_ALL}
+        WHERE s.starts_at >= %(start)s AND s.starts_at < %(end)s AND s.starts_at > now()
+          AND (%(include_booked)s OR (a.id IS NULL AND (%(urgent)s OR {OPEN_TO_ALL})))
           AND (%(provider_id)s::bigint IS NULL OR s.provider_id = %(provider_id)s)
         ORDER BY s.starts_at, s.provider_id
         """,
-        {"start": start, "end": start + timedelta(days=1), "provider_id": provider_id},
+        {
+            "start": start,
+            "end": start + timedelta(days=1),
+            "provider_id": provider_id,
+            "include_booked": include_booked,
+            "urgent": urgent,
+        },
     ).fetchall()
     return [Slot(**row) for row in rows]
+
+
+@app.post("/assessments", status_code=status.HTTP_201_CREATED)
+def create_assessment(
+    conn: Conn, user: Patient, triage: Triage, body: AssessmentCreate
+) -> Assessment:
+    """Step 1 of booking: describe the symptoms first. The triage result decides how soon the
+    patient should be seen, and so which times they may request (POST /appointments with
+    assessment_id). Only the structured result is stored, never the symptom text."""
+    assessment, latency_ms = _assess(triage, body.symptoms)
+    with conn.transaction():
+        row = _store_triage(conn, None, assessment, latency_ms, patient_id=user.id)
+    record = TriageRecord.model_validate(row)
+    return Assessment(triage=record, max_within_hours=urgency.max_within_hours(record.urgency))
 
 
 @app.get("/appointments")
@@ -171,23 +201,49 @@ def book_appointment(
     the triage service assesses them first, so the clinician sees the urgency with the request.
     """
     assessment = None
-    if body.symptoms is not None:
+    if body.symptoms is not None and body.assessment_id is None:
         # Before the transaction: the AI call takes seconds and shouldn't hold a lock
         assessment, latency_ms = _assess(triage, body.symptoms)
     try:
         with conn.transaction():
+            prior = None
+            if body.assessment_id is not None:
+                prior = conn.execute(
+                    """
+                    SELECT ai_urgency, created_at > now() - interval '1 day' AS fresh
+                    FROM triage_results
+                    WHERE id = %s AND patient_id = %s AND appointment_id IS NULL
+                    FOR UPDATE
+                    """,
+                    (body.assessment_id, user.id),
+                ).fetchone()
+                if prior is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "Assessment not found")
+                if not prior["fresh"]:
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "Please describe your symptoms again"
+                    )
+            priority = prior["ai_urgency"] if prior else None
+            limit = urgency.max_within_hours(priority)
             slot = conn.execute(
-                f"SELECT s.starts_at > now() AS upcoming, {OPEN_TO_ALL} AS open "
-                "FROM slots s WHERE s.id = %s",
-                (body.slot_id,),
+                f"SELECT s.starts_at > now() AS upcoming, {OPEN_TO_ALL} AS open, "
+                "s.starts_at <= now() + %s AS in_time FROM slots s WHERE s.id = %s",
+                (timedelta(hours=limit), body.slot_id),
             ).fetchone()
             if slot is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
             if not slot["upcoming"]:
                 metrics.BOOKING_CONFLICTS.labels("started").inc()
                 raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
-            if not slot["open"]:
+            if not slot["open"] and priority != "urgent":
                 raise HTTPException(status.HTTP_409_CONFLICT, RESERVED_MESSAGE)
+            # Within the priority's limit, unless nothing at all is free that soon: then the
+            # first free time after it is allowed (and the queue flags the visit)
+            if prior and not slot["in_time"]:
+                if scheduling.free_slots(conn, limit, limit=1, urgent=priority == "urgent"):
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, scheduling.limit_message(limit)
+                    )
             row = conn.execute(
                 """
                 INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s)
@@ -196,7 +252,12 @@ def book_appointment(
                 (user.id, body.slot_id),
             ).fetchone()
             if assessment is not None:
-                _store_triage(conn, row["id"], assessment, latency_ms)
+                _store_triage(conn, row["id"], assessment, latency_ms, patient_id=user.id)
+            if body.assessment_id is not None:
+                conn.execute(
+                    "UPDATE triage_results SET appointment_id = %s WHERE id = %s",
+                    (row["id"], body.assessment_id),
+                )
     except errors.UniqueViolation as exc:
         # The unique index on active appointments catches double booking, even concurrent ones.
         metrics.BOOKING_CONFLICTS.labels("already_booked").inc()
@@ -230,7 +291,9 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
     assessment, latency_ms = _assess(triage, body.symptoms)
     try:
         with conn.transaction():
-            row = _store_triage(conn, body.appointment_id, assessment, latency_ms)
+            row = _store_triage(
+                conn, body.appointment_id, assessment, latency_ms, patient_id=user.id
+            )
     except errors.UniqueViolation as exc:
         # Two intakes for the same appointment raced each other
         raise HTTPException(status.HTTP_409_CONFLICT, "Intake already submitted") from exc
@@ -246,19 +309,24 @@ def _assess(triage: TriageServiceClient, symptoms: str) -> tuple[TriageAssessmen
 
 
 def _store_triage(
-    conn: psycopg.Connection, appointment_id: int, assessment: TriageAssessment, latency_ms: int
+    conn: psycopg.Connection,
+    appointment_id: int | None,
+    assessment: TriageAssessment,
+    latency_ms: int,
+    patient_id: int,
 ) -> dict:
     """Store only the structured result. The symptom text is never written to the database."""
     row = conn.execute(
         f"""
         INSERT INTO triage_results AS t
-            (appointment_id, ai_urgency, suggested_specialty, red_flags, summary,
+            (appointment_id, patient_id, ai_urgency, suggested_specialty, red_flags, summary,
              latency_ms, tokens_used)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING {TRIAGE_COLUMNS}
         """,
         (
             appointment_id,
+            patient_id,
             assessment.urgency,
             assessment.suggested_specialty,
             assessment.red_flags,
