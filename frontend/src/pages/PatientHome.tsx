@@ -100,7 +100,7 @@ export function PatientHome({ patientId }: { patientId: number }) {
 
   return <>
     <div className="patient-hero"><div className="patient-hero-inner"><div><div className="eyebrow">CLOUD CLINIC</div><h1>Your health, <em>in good hands.</em></h1><p>Book your next visit or tell us what’s going on. We’ll help your care team prepare.</p>
-      <div className="hero-actions"><NavLink className="button button-primary" to="/book">Book an appointment <ArrowRight size={16} /></NavLink><NavLink className="button button-secondary" to="/intake">Share symptoms</NavLink></div></div>
+      <div className="hero-actions"><NavLink className="button button-primary" to="/book">Book an appointment <ArrowRight size={16} /></NavLink><NavLink className="button button-secondary" to="/priority">How priority works</NavLink></div></div>
       <div className="hero-art"><HeartPulse className="hero-heartbeat" size={270} strokeWidth={1.35} aria-hidden="true" /></div></div></div>
     {declined.map((a) => <section className="panel offer-card declined-card" key={a.id} aria-labelledby={`declined-${a.id}`}>
       <div className="info-icon lavender"><CalendarDays /></div>
@@ -110,7 +110,7 @@ export function PatientHome({ patientId }: { patientId: number }) {
         <NavLink className="button button-primary" to="/book">Request another time <ArrowRight size={16} /></NavLink>
       </div>
     </section>)}
-    {upcoming.filter((a) => a.pending_offer).map((a) => <OfferCard key={a.id} appointment={a} onAnswered={() => setReload((n) => n + 1)} />)}
+    {upcoming.filter((a) => a.pending_offers?.length || a.pending_offer).map((a) => <OfferCard key={a.id} appointment={a} onAnswered={() => setReload((n) => n + 1)} />)}
     <section className="patient-info-grid">
       <div className="panel patient-info"><div className="info-icon mint"><CalendarDays /></div><h3>Your next step</h3>
         {next

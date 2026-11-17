@@ -7,24 +7,26 @@ decides a race, so two patients can never end up in the same slot.
 
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import timedelta
 from typing import Annotated
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg import errors
 
-from app import db, metrics
+from app import db, metrics, urgency
 from app.auth import Clinician, Patient
 from app.metrics import STREAM_CLIENTS
 from app.models import (
     MyAppointment,
     OfferResult,
+    OffersDecline,
     PendingOffer,
     RescheduleOffer,
     RescheduleOfferCreate,
     Slot,
 )
-from app.urgency import OPEN_TO_ALL
+from app.urgency import EFFECTIVE_URGENCY, OPEN_TO_ALL
 
 router = APIRouter()
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
@@ -48,15 +50,15 @@ _MY_APPOINTMENTS_SQL = f"""
     SELECT a.id, a.slot_id, a.status, a.created_at, s.starts_at,
            p.name AS provider_name, p.specialty, t.id IS NOT NULL AS intake_submitted,
            a.approved_at IS NOT NULL AS approved, a.declined_at IS NOT NULL AS declined,
-           a.decline_reason,
-           po.id AS offer_id, po.slot_id AS offer_slot_id, po.starts_at AS offer_starts_at,
-           po.provider_name AS offer_provider_name
+           a.decline_reason, po.offers
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN providers p ON p.id = s.provider_id
     LEFT JOIN triage_results t ON t.appointment_id = a.id
     LEFT JOIN LATERAL (
-        SELECT o.id, ns.id AS slot_id, ns.starts_at, np.name AS provider_name
+        SELECT jsonb_agg(jsonb_build_object(
+                   'id', o.id, 'slot_id', ns.id, 'starts_at', ns.starts_at,
+                   'provider_name', np.name) ORDER BY ns.starts_at, o.id) AS offers
         FROM reschedule_offers o
         JOIN slots ns ON ns.id = o.proposed_slot_id
         JOIN providers np ON np.id = ns.provider_id
@@ -124,25 +126,23 @@ async def my_appointment_events(
 def _to_my_appointments(rows: list[dict]) -> list[MyAppointment]:
     result = []
     for row in rows:
-        offer = None
-        if row["offer_id"] is not None:
-            offer = PendingOffer(
-                id=row["offer_id"],
-                slot_id=row["offer_slot_id"],
-                starts_at=row["offer_starts_at"],
-                provider_name=row["offer_provider_name"],
+        offers = [PendingOffer(**o) for o in row["offers"] or []]
+        fields = {k: v for k, v in row.items() if k != "offers"}
+        result.append(
+            MyAppointment(
+                **fields, pending_offers=offers, pending_offer=offers[0] if offers else None
             )
-        fields = {k: v for k, v in row.items() if not k.startswith("offer_")}
-        result.append(MyAppointment(**fields, pending_offer=offer))
+        )
     return result
 
 
-def _booked_appointment(conn: psycopg.Connection, appointment_id: int) -> dict:
+def _booked_appointment(conn: psycopg.Connection, appointment_id: int, lock: bool = False) -> dict:
     row = conn.execute(
         """
         SELECT a.id, a.status, s.provider_id, s.starts_at
         FROM appointments a JOIN slots s ON s.id = a.slot_id WHERE a.id = %s
-        """,
+        """
+        + (" FOR UPDATE OF a" if lock else ""),
         (appointment_id,),
     ).fetchone()
     if row is None:
@@ -176,60 +176,141 @@ def earlier_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
     return [Slot(**row) for row in rows]
 
 
-@router.post(
-    "/appointments/{appointment_id}/reschedule-offers", status_code=status.HTTP_201_CREATED
-)
-def offer_earlier_visit(
-    conn: Conn, user: Clinician, appointment_id: int, body: RescheduleOfferCreate
-) -> RescheduleOffer:
-    """Offer the patient an earlier slot. The patient accepts or declines; nothing moves yet."""
+_LIMIT_SQL = f"""
+    SELECT {EFFECTIVE_URGENCY} AS effective
+    FROM appointments a
+    LEFT JOIN triage_results t ON t.appointment_id = a.id
+    LEFT JOIN LATERAL (
+        SELECT * FROM lab_reports lr WHERE lr.appointment_id = a.id
+        ORDER BY lr.uploaded_at DESC LIMIT 1
+    ) l ON true
+    WHERE a.id = %s
+"""
+
+
+def _limit_hours(conn: psycopg.Connection, appointment_id: int) -> int:
+    """How soon this patient should be seen, from the same urgency the queue shows."""
+    row = conn.execute(_LIMIT_SQL, (appointment_id,)).fetchone()
+    return urgency.max_within_hours(row["effective"] if row else None)
+
+
+# Times a clinician may propose: free and upcoming, with any provider, and either inside the
+# patient's limit or at least earlier than their current visit (when nothing is free in time,
+# sooner is still safer). Includes the urgent reserve: offering it is what it is for.
+_PROPOSABLE = """
+    s.starts_at > now()
+    AND (s.starts_at <= now() + %(limit)s OR s.starts_at < %(current)s)
+    AND NOT EXISTS (
+        SELECT 1 FROM appointments x WHERE x.slot_id = s.id AND x.status <> 'cancelled'
+    )
+"""
+
+
+@router.get("/appointments/{appointment_id}/alternative-slots")
+def alternative_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
+    """Times the clinician can propose instead of the requested one (at most 12), soonest first;
+    at the same time, the patient's own provider comes first."""
     current = _booked_appointment(conn, appointment_id)
-    slot = conn.execute(
-        """
-        SELECT s.starts_at, s.starts_at > now() AS upcoming, p.name AS provider_name
-        FROM slots s JOIN providers p ON p.id = s.provider_id WHERE s.id = %s
+    rows = conn.execute(
+        f"""
+        SELECT s.id, s.provider_id, p.name AS provider_name, p.specialty, s.starts_at, s.ends_at,
+               NOT {OPEN_TO_ALL} AS reserved
+        FROM slots s JOIN providers p ON p.id = s.provider_id
+        WHERE {_PROPOSABLE}
+        ORDER BY s.starts_at, s.provider_id <> %(provider)s, s.provider_id
+        LIMIT 12
         """,
-        (body.slot_id,),
-    ).fetchone()
-    if slot is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
-    if not slot["upcoming"]:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
-    if slot["starts_at"] >= current["starts_at"]:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "The slot must be earlier than the current visit"
-        )
-    taken = conn.execute(
-        "SELECT 1 FROM appointments WHERE slot_id = %s AND status <> 'cancelled'", (body.slot_id,)
-    ).fetchone()
-    if taken:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Slot is already booked")
-    try:
-        with conn.transaction():
-            # An old offer whose slot has since been taken doesn't block a new one
-            conn.execute(
-                """
-                UPDATE reschedule_offers o SET status = 'expired', responded_at = now()
-                FROM slots ns
-                WHERE o.appointment_id = %s AND o.status = 'pending' AND ns.id = o.proposed_slot_id
-                  AND NOT ("""
-                + _LIVE
-                + """)
+        {
+            "limit": timedelta(hours=_limit_hours(conn, appointment_id)),
+            "current": current["starts_at"],
+            "provider": current["provider_id"],
+        },
+    ).fetchall()
+    return [Slot(**row) for row in rows]
+
+
+def propose_times(
+    conn: psycopg.Connection, clinician_id: int, appointment_id: int, body: RescheduleOfferCreate
+) -> list[RescheduleOffer]:
+    """Propose one to three times. They replace any times proposed before; nothing moves until
+    the patient accepts one."""
+    slot_ids = body.slot_ids or ([body.slot_id] if body.slot_id else [])
+    if not slot_ids:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose at least one time")
+    if len(set(slot_ids)) != len(slot_ids):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Each time can be proposed once")
+    with conn.transaction():
+        current = _booked_appointment(conn, appointment_id, lock=True)
+        params = {
+            "limit": timedelta(hours=_limit_hours(conn, appointment_id)),
+            "current": current["starts_at"],
+        }
+        slots = {}
+        for slot_id in slot_ids:
+            slot = conn.execute(
+                f"""
+                SELECT s.id, s.starts_at, s.starts_at > now() AS upcoming, p.name AS provider_name,
+                       EXISTS (SELECT 1 FROM appointments x
+                               WHERE x.slot_id = s.id AND x.status <> 'cancelled') AS taken,
+                       {_PROPOSABLE} AS proposable
+                FROM slots s JOIN providers p ON p.id = s.provider_id WHERE s.id = %(id)s
                 """,
-                (appointment_id,),
-            )
+                {**params, "id": slot_id},
+            ).fetchone()
+            if slot is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Slot not found")
+            if not slot["upcoming"]:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Slot has already started")
+            if slot["taken"]:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Slot is already booked")
+            if not slot["proposable"]:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "That time is later than the patient's priority allows",
+                )
+            slots[slot_id] = slot
+        # New proposals replace the old ones
+        conn.execute(
+            "UPDATE reschedule_offers SET status = 'expired', responded_at = now() "
+            "WHERE appointment_id = %s AND status = 'pending'",
+            (appointment_id,),
+        )
+        offers = []
+        for slot_id in slot_ids:
             row = conn.execute(
                 """
                 INSERT INTO reschedule_offers (appointment_id, proposed_slot_id, offered_by, reason)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id, appointment_id, proposed_slot_id, status, reason, created_at
                 """,
-                (appointment_id, body.slot_id, user.id, body.reason),
+                (appointment_id, slot_id, clinician_id, body.reason),
             ).fetchone()
-    except errors.UniqueViolation as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "An offer is already pending") from exc
-    metrics.RESCHEDULE_OFFERS.labels("offered").inc()
-    return RescheduleOffer(**row, provider_name=slot["provider_name"], starts_at=slot["starts_at"])
+            slot = slots[slot_id]
+            offers.append(
+                RescheduleOffer(
+                    **row, provider_name=slot["provider_name"], starts_at=slot["starts_at"]
+                )
+            )
+    metrics.RESCHEDULE_OFFERS.labels("offered").inc(len(offers))
+    return offers
+
+
+@router.post("/appointments/{appointment_id}/proposals", status_code=status.HTTP_201_CREATED)
+def propose(
+    conn: Conn, user: Clinician, appointment_id: int, body: RescheduleOfferCreate
+) -> list[RescheduleOffer]:
+    """Propose up to three times; the patient accepts one, picks their own, or declines them."""
+    return propose_times(conn, user.id, appointment_id, body)
+
+
+@router.post(
+    "/appointments/{appointment_id}/reschedule-offers", status_code=status.HTTP_201_CREATED
+)
+def offer_earlier_visit(
+    conn: Conn, user: Clinician, appointment_id: int, body: RescheduleOfferCreate
+) -> RescheduleOffer:
+    """Propose a single time (the first form of POST /appointments/{id}/proposals)."""
+    return propose_times(conn, user.id, appointment_id, body)[0]
 
 
 def move_booking(conn: psycopg.Connection, patient_id: int, old_id: int, slot_id: int) -> int:
@@ -331,26 +412,29 @@ def accept_offer(conn: Conn, user: Patient, offer_id: int) -> MyAppointment:
 
 
 @router.post("/reschedule-offers/{offer_id}/decline")
-def decline_offer(conn: Conn, user: Patient, offer_id: int) -> OfferResult:
-    """Decline: your booking stays as it is."""
-    row = conn.execute(
-        """
-        UPDATE reschedule_offers o SET status = 'declined', responded_at = now()
-        FROM appointments a
-        WHERE o.id = %s AND a.id = o.appointment_id AND a.patient_id = %s
-          AND o.status = 'pending'
-        RETURNING o.id, o.status
-        """,
+def decline_offer(
+    conn: Conn, user: Patient, offer_id: int, body: OffersDecline | None = None
+) -> OfferResult:
+    """None of the proposed times work: all of them are declined, with an optional note for the
+    clinician. The booking stays as it is; the patient can also choose another time themselves."""
+    note = (body.note or "").strip() if body else ""
+    offer = conn.execute(
+        "SELECT o.appointment_id, o.status FROM reschedule_offers o "
+        "JOIN appointments a ON a.id = o.appointment_id WHERE o.id = %s AND a.patient_id = %s",
         (offer_id, user.id),
     ).fetchone()
-    if row is None:
-        mine = conn.execute(
-            "SELECT 1 FROM reschedule_offers o JOIN appointments a ON a.id = o.appointment_id "
-            "WHERE o.id = %s AND a.patient_id = %s",
-            (offer_id, user.id),
-        ).fetchone()
-        if mine is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Offer not found")
+    if offer is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Offer not found")
+    if offer["status"] != "pending":
         raise HTTPException(status.HTTP_409_CONFLICT, "This offer is no longer available")
-    metrics.RESCHEDULE_OFFERS.labels("declined").inc()
-    return OfferResult(**row)
+    rows = conn.execute(
+        """
+        UPDATE reschedule_offers SET status = 'declined', responded_at = now(),
+               patient_note = nullif(%s, '')
+        WHERE appointment_id = %s AND status = 'pending'
+        RETURNING id
+        """,
+        (note, offer["appointment_id"]),
+    ).fetchall()
+    metrics.RESCHEDULE_OFFERS.labels("declined").inc(len(rows))
+    return OfferResult(id=offer_id, status="declined")

@@ -50,7 +50,11 @@ QUEUE_SQL = f"""
                AND NOT {OFFER_PENDING},
                false) AS needs_earlier_visit,
            {OFFER_PENDING} AS offer_pending,
-           a.status = 'booked' AND a.approved_at IS NULL AS awaiting_approval
+           a.status = 'booked' AND a.approved_at IS NULL AS awaiting_approval,
+           -- The latest proposal answer: the patient declined the times ('' with no note)
+           (SELECT CASE WHEN o.status = 'declined' THEN coalesce(o.patient_note, '') END
+            FROM reschedule_offers o WHERE o.appointment_id = a.id
+            ORDER BY o.created_at DESC, o.id DESC LIMIT 1) AS offer_declined_note
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN providers p ON p.id = s.provider_id
@@ -90,6 +94,7 @@ def to_entry(row: dict[str, Any]) -> QueueEntry:
         needs_earlier_visit=bool(row.get("needs_earlier_visit")),
         offer_pending=bool(row.get("offer_pending")),
         awaiting_approval=bool(row.get("awaiting_approval")),
+        offer_declined_note=row.get("offer_declined_note"),
     )
 
 

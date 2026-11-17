@@ -31,7 +31,9 @@ let nextId = 1000
 // Requests a clinician declined: appointment id -> the reason shown to the patient
 const declines = new Map<number, string | null>()
 const listeners = new Set<(q: QueueEntry[]) => void>()
-const offers: { id: number; appointment_id: number; slot_id: number; status: RescheduleOffer['status']; created_at: string }[] = []
+const offers: { id: number; appointment_id: number; slot_id: number; status: RescheduleOffer['status']; created_at: string; patient_note?: string | null }[] = []
+// Assessments made before booking (POST /assessments): triage id -> patient id
+const assessmentOwner = new Map<number, number>()
 
 // Mirrors app/urgency.py (GET /urgency-matrix)
 const MATRIX: UrgencyMatrix = {
@@ -94,8 +96,13 @@ const nextFree = (afterHours: number, providerId?: number, urgent = false) =>
 const LATEST_VISIT_HOURS: Partial<Record<Urgency, number>> = { urgent: 24, soon: 72 }
 
 /** An offer the patient can still act on: pending, slot not started and still free. */
-const liveOffer = (appointmentId: number) => offers.find((o) => o.appointment_id === appointmentId && o.status === 'pending'
+const liveOffers = (appointmentId: number) => offers.filter((o) => o.appointment_id === appointmentId && o.status === 'pending'
   && Date.parse(slots.get(o.slot_id)!.starts_at) > Date.now() && !isActive(o.slot_id))
+const liveOffer = (appointmentId: number) => liveOffers(appointmentId)[0]
+const declinedNote = (appointmentId: number) => {
+  const latest = offers.filter((o) => o.appointment_id === appointmentId).slice(-1)[0]
+  return latest?.status === 'declined' ? latest.patient_note ?? '' : null
+}
 
 /** Book the slot, move the intake and lab reports over, cancel the old visit (app/reschedule.py). */
 function moveBooking(old: Appointment, slotId: number, approved = false): Appointment {
@@ -141,7 +148,7 @@ function fakeTriage(symptoms: string): Pick<TriageRecord, 'ai_urgency' | 'sugges
   return { ai_urgency: 'routine', suggested_specialty: 'General Practice', red_flags: [], summary: 'No red-flag symptoms detected in the intake text.' }
 }
 
-function addTriage(appointmentId: number, t: ReturnType<typeof fakeTriage>, createdMinutesAgo = 0): TriageRecord {
+function addTriage(appointmentId: number | null, t: ReturnType<typeof fakeTriage>, createdMinutesAgo = 0): TriageRecord {
   const record: TriageRecord = {
     id: nextId++, appointment_id: appointmentId, ...t, final_urgency: null, urgency: t.ai_urgency,
     overridden: false, latency_ms: 40, created_at: minutesAgo(createdMinutesAgo), reviewed_at: null,
@@ -175,7 +182,7 @@ function queue(): QueueEntry[] {
       const offerPending = Boolean(liveOffer(e.appointment_id))
       const latest = urgency ? LATEST_VISIT_HOURS[urgency] : undefined
       const needsEarlier = e.status === 'booked' && latest !== undefined && !offerPending && Date.parse(e.starts_at) > Date.now() + latest * 3_600_000
-      return { ...e, lab, urgency, needs_earlier_visit: needsEarlier, offer_pending: offerPending }
+      return { ...e, lab, urgency, needs_earlier_visit: needsEarlier, offer_pending: offerPending, offer_declined_note: declinedNote(e.appointment_id) }
     })
     .sort((x, y) => {
       const ux = x.urgency ? ORDER[x.urgency] : 3, uy = y.urgency ? ORDER[y.urgency] : 3
@@ -239,17 +246,17 @@ async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boole
   return ok(patientView(report))
 }
 
-function pendingOfferFor(appointmentId: number): PendingOffer | null {
-  const offer = liveOffer(appointmentId)
-  if (!offer) return null
-  const slot = slots.get(offer.slot_id)!
-  return { id: offer.id, slot_id: slot.id, starts_at: slot.starts_at, provider_name: slot.provider_name }
+function pendingOffersFor(appointmentId: number): PendingOffer[] {
+  return liveOffers(appointmentId).map((offer) => {
+    const slot = slots.get(offer.slot_id)!
+    return { id: offer.id, slot_id: slot.id, starts_at: slot.starts_at, provider_name: slot.provider_name }
+  }).sort((x, y) => x.starts_at.localeCompare(y.starts_at))
 }
 
 function myView(id: number): MyAppointment {
   const a = appointments.find((x) => x.id === id)!, slot = slots.get(a.slot_id)!
   return { id: a.id, slot_id: a.slot_id, status: a.status, created_at: a.created_at, starts_at: slot.starts_at, provider_name: slot.provider_name,
-    specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id), pending_offer: pendingOfferFor(a.id),
+    specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id), pending_offers: pendingOffersFor(a.id), pending_offer: pendingOffersFor(a.id)[0] ?? null,
     approved: Boolean(a.approved_at), declined: declines.has(a.id), decline_reason: declines.get(a.id) ?? null }
 }
 
@@ -274,14 +281,28 @@ function myView(id: number): MyAppointment {
 })()
 
 export const mockApi: Api = {
-  async getSlots(date, providerId) {
+  async getSlots(date, providerId, options) {
     await pause(150)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail(422, 'Please choose a valid date.')
     const now = Date.now()
-    const booked = new Set(appointments.filter((a) => a.status !== 'cancelled').map((a) => a.slot_id))
-    return ok(slotsFor(date).filter((s) => !booked.has(s.id) && !takenByOthers.has(s.id) && !reserveClosed(s) && Date.parse(s.starts_at) > now && (!providerId || s.provider_id === providerId)).map(view))
+    const listed = slotsFor(date)
+      .filter((s) => Date.parse(s.starts_at) > now && (!providerId || s.provider_id === providerId))
+      .map((s) => ({ ...view(s), available: !isActive(s.id) && (Boolean(options?.urgent) || !reserveClosed(s)) }))
+    return ok(options?.includeBooked ? listed : listed.filter((s) => s.available))
   },
-  async book(slotId, symptoms) {
+  async assess(symptoms) {
+    await pause(500)
+    if (!symptoms.trim() || symptoms.length > 4000) return fail(422, 'Please check the form and try again.')
+    const record = addTriage(null, fakeTriage(symptoms))
+    assessmentOwner.set(record.id, mockPatientId())
+    return ok({ triage: record, max_within_hours: limitFor(record.urgency) })
+  },
+  async timeframeAvailability(priority) {
+    await pause(120)
+    const limit = limitFor(priority ?? null)
+    return ok(MATRIX.timeframes.map((t) => ({ ...t, free: freeSlotsWithin(t.hours, undefined, 1000, priority === 'urgent').length, allowed: t.hours <= limit })))
+  },
+  async book(slotId, { assessmentId, symptoms }) {
     await pause(400)
     const patientId = mockPatientId()
     const slot = slots.get(slotId)
@@ -291,9 +312,17 @@ export const mockApi: Api = {
       return fail(409, 'Slot is already booked')
     if (reserveClosed(slot)) return fail(409, RESERVED_MESSAGE)
     if (symptoms !== undefined && (!symptoms.trim() || symptoms.length > 4000)) return fail(422, 'Please check the form and try again.')
+    const prior = assessmentId === undefined ? undefined : triage.find((t) => t.id === assessmentId && t.appointment_id === null && assessmentOwner.get(t.id) === patientId)
+    if (assessmentId !== undefined && !prior) return fail(404, 'Assessment not found')
+    if (prior) {
+      const limit = limitFor(prior.urgency)
+      if (Date.parse(slot.starts_at) > Date.now() + limit * 3_600_000 && freeSlotsWithin(limit, undefined, 1, prior.urgency === 'urgent').length)
+        return fail(422, limitMessage(limit))
+    }
     const appt: Appointment = { id: nextId++, patient_id: patientId, slot_id: slotId, status: 'booked', created_at: new Date().toISOString(), approved_at: null }
     appointments.push(appt)
-    if (symptoms) addTriage(appt.id, fakeTriage(symptoms))
+    if (prior) prior.appointment_id = appt.id
+    else if (symptoms) addTriage(appt.id, fakeTriage(symptoms))
     notify()
     return ok(appt)
   },
@@ -394,15 +423,15 @@ export const mockApi: Api = {
     return file ? ok(file) : fail(404, 'Lab report not found')
   },
   async urgencyMatrix() { await pause(100); return ok(MATRIX) },
-  async earliestSlots(withinHours, providerId) {
+  async earliestSlots(withinHours, providerId, urgent) {
     await pause(200)
     if (!MATRIX.timeframes.some((t) => t.hours === withinHours)) return fail(422, 'within_hours must be one of 24, 72, 168, 336')
-    return ok(freeSlotsWithin(withinHours, providerId))
+    return ok(freeSlotsWithin(withinHours, providerId, 12, Boolean(urgent)))
   },
-  async nextAvailable(afterHours, providerId) {
+  async nextAvailable(afterHours, providerId, urgent) {
     await pause(150)
     if (!MATRIX.timeframes.some((t) => t.hours === afterHours)) return fail(422, 'after_hours must be one of 24, 72, 168, 336')
-    return ok(nextFree(afterHours, providerId))
+    return ok(nextFree(afterHours, providerId, Boolean(urgent)))
   },
   async scheduleOptions(appointmentId, withinHours) {
     await pause(200)
@@ -473,14 +502,46 @@ export const mockApi: Api = {
     notify()
     return ok(myView(moved.id))
   },
-  async declineOffer(offerId) {
+  async declineOffer(offerId, note) {
     await pause(200)
     const offer = offers.find((o) => o.id === offerId)
     if (!offer || !appointments.some((a) => a.id === offer.appointment_id && a.patient_id === mockPatientId())) return fail(404, 'Offer not found')
     if (offer.status !== 'pending') return fail(409, 'This offer is no longer available')
-    offer.status = 'declined'
+    offers.filter((o) => o.appointment_id === offer.appointment_id && o.status === 'pending')
+      .forEach((o) => { o.status = 'declined'; o.patient_note = note?.trim() || null })
     notify()
-    return ok({ id: offer.id, status: offer.status })
+    return ok({ id: offer.id, status: 'declined' })
+  },
+  async alternativeSlots(appointmentId) {
+    await pause(200)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
+    const current = slots.get(appt.slot_id)!
+    const limit = limitFor(queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null)
+    return ok(freeSlotsWithin(14 * 24, undefined, 400, true)
+      .filter((s) => Date.parse(s.starts_at) <= Date.now() + limit * 3_600_000 || s.starts_at < current.starts_at)
+      .slice(0, 12))
+  },
+  async propose(appointmentId, slotIds) {
+    await pause(300)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
+    if (!slotIds.length || slotIds.length > 3 || new Set(slotIds).size !== slotIds.length) return fail(422, 'Choose one to three different times')
+    for (const id of slotIds) {
+      if (!slots.get(id)) return fail(404, 'Slot not found')
+      if (isActive(id)) return fail(409, 'Slot is already booked')
+    }
+    offers.filter((o) => o.appointment_id === appointmentId && o.status === 'pending').forEach((o) => { o.status = 'expired' })
+    const created = slotIds.map((id) => {
+      const offer = { id: nextId++, appointment_id: appointmentId, slot_id: id, status: 'pending' as const, created_at: new Date().toISOString() }
+      offers.push(offer)
+      const slot = slots.get(id)!
+      return { id: offer.id, appointment_id: appointmentId, proposed_slot_id: id, provider_name: slot.provider_name, starts_at: slot.starts_at, status: 'pending' as const, reason: null, created_at: offer.created_at }
+    })
+    notify()
+    return ok(created)
   },
   async review(triageId, finalUrgency) {
     await pause(200)

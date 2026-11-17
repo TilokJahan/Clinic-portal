@@ -196,6 +196,22 @@ h1 .wave { margin-left: 4px; color: #d9a85f; font-size: 20px; }
 .approval-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #fff4dc; color: #8a5a00; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .request-status { font-weight: 600; }
 .declined-card { border-left: 4px solid #c9573d; }
+.booking-assessment { display: grid; gap: 12px; }
+.booking-assessment .text-button { justify-self: start; }
+.slot-grid .slot-button { height: auto; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 8px; }
+.slot-button.unavailable, .slot-button.unavailable:hover { color: #a3b0b5; background: #f1f4f5; border-color: #e3e9ec; border-style: dashed; cursor: not-allowed; box-shadow: none; }
+.slot-button.unavailable b { text-decoration: line-through; font-weight: 600; }
+.slot-state { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.slot-legend { display: flex; gap: 18px; margin: 0 0 10px; color: #71858f; font-size: 12px; }
+.slot-legend .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 3px; vertical-align: -1px; border: 1px solid #dce7ee; background: #fff; }
+.slot-legend .dot.booked { background: #f1f4f5; border-style: dashed; }
+.timeframe-chips .review-choice { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; }
+.chip-note { font-size: 10px; font-weight: 600; opacity: .85; }
+.offer-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 9px; margin: 10px 0 12px; }
+.offer-choices .slot-button { height: auto; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 8px; }
+.offer-choices .slot-button:disabled { opacity: 1; cursor: default; }
+.offer-card .schedule-actions { flex-wrap: wrap; align-items: center; }
+.declined-note { padding: 10px 12px; color: #7a2414; background: #fbece7; border-radius: 8px; }
 .past-visits { padding: 20px; margin-top: 15px; }
 .past-visits h3 { margin: 0 0 10px; }
 .past-visits ul { list-style: none; margin: 0; padding: 0; }

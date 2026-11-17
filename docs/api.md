@@ -8,7 +8,9 @@ Every change to this file goes through a pull request that all three of us revie
 | POST | `/auth/dev-login` | appointment | none (dev only) | Demo token for a seed account | done |
 | GET | `/me` | appointment | any | The signed-in user | done |
 | GET | `/slots?date=YYYY-MM-DD&provider_id=` | appointment | any | List free slots | done |
-| POST | `/appointments` | appointment | patient | Request a slot, with symptoms (waits for approval) | done |
+| POST | `/assessments` | appointment | patient | Step 1 of booking: describe symptoms, get the priority and time limit | done |
+| GET | `/slots/timeframes?priority=` | appointment | any | Each timeframe with its free times and whether the priority allows it | done |
+| POST | `/appointments` | appointment | patient | Request a slot with an assessment (waits for approval) | done |
 | POST | `/appointments/{id}/approve` | appointment | clinician | Approve a booking request | done |
 | POST | `/appointments/{id}/decline` | appointment | clinician | Decline a request, with a note for the patient | done |
 | GET | `/appointments` | appointment | patient | My bookings | done |
@@ -23,6 +25,8 @@ Every change to this file goes through a pull request that all three of us revie
 | GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results (not lab techs) | done |
 | PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
 | GET | `/appointments/{id}/earlier-slots` | appointment | clinician | Free earlier slots with any provider (max 10) | done |
+| GET | `/appointments/{id}/alternative-slots` | appointment | clinician | Times that may be proposed: any doctor, within the priority (max 12) | done |
+| POST | `/appointments/{id}/proposals` | appointment | clinician | Propose one to three times (replaces earlier proposals) | done |
 | POST | `/appointments/{id}/reschedule-offers` | appointment | clinician | Offer the patient an earlier slot | done |
 | POST | `/reschedule-offers/{id}/accept` | appointment | patient (own) | Accept: move to the earlier slot | done |
 | POST | `/reschedule-offers/{id}/decline` | appointment | patient (own) | Decline: keep the booking | done |
@@ -172,9 +176,29 @@ counts as free.
 
 ### `POST /appointments` (patient)
 
-Body `{"slot_id": 1, "symptoms": "Sore throat for three days"}`. The patient is the signed-in
-user (any `patient_id` in the body is ignored). Returns the `Appointment`, with
-`"approved_at": null`.
+Body `{"slot_id": 1, "assessment_id": 12}`. The patient is the signed-in user (any
+`patient_id` in the body is ignored). Returns the `Appointment`, with `"approved_at": null`.
+
+**Booking is three steps, symptoms first:**
+
+1. `POST /assessments` with `{"symptoms": "..."}` (1–4000 characters) runs the same triage as
+   `POST /intake` and returns `{"triage": TriageRecord, "max_within_hours": 24}`. The triage
+   belongs to the patient (`appointment_id` is `null`) until a time is requested with it; the
+   symptom text is never stored. Nothing reaches the clinician queue yet.
+2. The patient chooses a time. `GET /slots/timeframes?priority=urgent` lists each timeframe as
+   `{"hours", "label", "free", "allowed"}`: the app greys out a timeframe with `free: 0` or
+   `allowed: false`. `GET /slots?date=...&include_booked=true` lists the whole day with
+   `"available": false` on booked times (and on the urgent reserve unless `urgent=true`).
+   `GET /slots/earliest` and `/slots/next-available` take `urgent=true` too.
+3. `POST /appointments` with the `assessment_id`. The time must start within
+   `max_within_hours`, unless nothing at all is free that soon (then a later time is allowed and
+   the queue flags it): otherwise 422 with how soon the patient needs to be seen. Only an urgent
+   assessment may take the urgent reserve. The assessment is linked to the new appointment and
+   can't be used again (404); one older than a day answers 409 `"Please describe your symptoms
+   again"`.
+
+`{"slot_id": 1, "symptoms": "..."}` (assessed with the request) and `{"slot_id": 1}` (symptoms
+later via `POST /intake`) still work for older clients.
 
 This is a **request**: the slot is held at once, and the visit waits for a clinician to approve
 it (`approved_at` is set) or decline it. `symptoms` (1–4000 characters) are sent to the triage
@@ -215,9 +239,28 @@ A clinician decides a request from the queue, where it has `"awaiting_approval":
   The appointment is cancelled, so the slot opens again, and any offered time expires.
 - Both answer 404 for an unknown appointment, 409 `"Already approved"` or `"This request is no
   longer open"`, and 403 for any role but clinician or admin.
-- Instead, the clinician can offer a different time (`POST /appointments/{id}/reschedule-offers`).
-  If the patient accepts it, the new visit is approved. A visit the patient moves themselves
-  (`POST /appointments/{id}/reschedule`) is a new request and needs approval again.
+- Instead, the clinician can propose other times (below). If the patient accepts one, the new
+  visit is approved. A visit the patient moves themselves (`POST /appointments/{id}/reschedule`)
+  is a new request and needs approval again.
+
+### Proposing other times (clinician) and answering them (patient)
+
+- `GET /appointments/{id}/alternative-slots`: free, upcoming times with **any** doctor that fit
+  the patient's priority (or are at least earlier than the current visit), soonest first, at
+  most 12. Includes the urgent reserve.
+- `POST /appointments/{id}/proposals` with `{"slot_ids": [4, 9]}` (one to three, different):
+  returns the `RescheduleOffer[]`. New proposals replace any still open. 422 for a time later
+  than the priority allows, 409 for a booked or started one.
+  (`POST /appointments/{id}/reschedule-offers` with `{"slot_id": 4}` is the single-time form.)
+- The patient sees them in `pending_offers` on `GET /appointments` and then either:
+  - accepts one: `POST /reschedule-offers/{id}/accept` (the others expire; the visit moves and
+    is approved);
+  - chooses another time themselves: `POST /appointments/{id}/reschedule` (the proposals
+    expire; the new time needs approval again); or
+  - says none of them work: `POST /reschedule-offers/{id}/decline` with an optional
+    `{"note": "Afternoons only"}` (at most 500 characters). All open proposals are declined and
+    the queue entry shows `offer_declined_note` (the note, or `""`) until new times are
+    proposed.
 
 `pending_offer` is `null`, or an earlier visit the care team has offered:
 `{"id": 4, "slot_id": 12, "starts_at": "2030-01-06T10:00:00Z", "provider_name": "Dr. Alex Example"}`.

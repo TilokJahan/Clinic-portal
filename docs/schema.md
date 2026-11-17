@@ -8,7 +8,10 @@ and [`schemav5_reschedule.sql`](../services/appointment-service/db/schemav5_resc
 and [`schemav6_urgent_reserve.sql`](../services/appointment-service/db/schemav6_urgent_reserve.sql) (the urgent
 reserve; it also adds slots so two weeks are always open, on every deploy).
 and [`schemav7_approval.sql`](../services/appointment-service/db/schemav7_approval.sql) (clinician approval of
-booking requests: `appointments.approved_at`, `approved_by`, `declined_at`, `decline_reason`).
+booking requests: `appointments.approved_at`, `approved_by`, `declined_at`, `decline_reason`)
+and [`schemav8_booking_flow.sql`](../services/appointment-service/db/schemav8_booking_flow.sql) (symptoms first:
+`triage_results.patient_id`, and `appointment_id` may be `NULL` until a time is requested; several
+proposed times per appointment, and `reschedule_offers.patient_note`).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid

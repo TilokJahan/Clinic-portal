@@ -23,7 +23,7 @@ export function QueueRow({ entry, compact = false, selected = false, onSelect }:
     <div className="patient-cell"><div className={`patient-avatar avatar-${entry.appointment_id % 4}`}>{initials(entry.patient_label)}</div><div><b>{entry.patient_label}</b>{entry.awaiting_approval && <> <span className="approval-badge">awaiting approval</span></>}<span>{formatTime(entry.starts_at)} · {entry.provider_name}</span></div></div>
     <div className="reason-cell"><span>{t ? t.summary : entry.lab ? 'Lab report received' : 'Waiting for the patient’s intake'}</span>{t && t.red_flags.length > 0 && <small>{t.red_flags.length} red flag{t.red_flags.length > 1 ? 's' : ''}</small>}<LabReasonChip reason={entry.lab?.reason ?? null} urgency={entry.lab?.urgency ?? null} /></div>
     <div className="wait-cell">{formatWait(waitMinutes(entry))}</div>
-    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && entry.needs_earlier_visit && <small className="review-tag earlier">needs earlier visit</small>}{!compact && entry.offer_pending && <small className="review-tag">offer sent</small>}{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
+    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && entry.needs_earlier_visit && <small className="review-tag earlier">needs earlier visit</small>}{!compact && entry.offer_pending && <small className="review-tag">times proposed</small>}{!compact && !entry.offer_pending && entry.offer_declined_note != null && <small className="review-tag earlier">times declined</small>}{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
   </>
   if (!onSelect) return <div className="queue-row">{cells}</div>
   return <button className={`queue-row queue-row-button ${selected ? 'selected' : ''}`} onClick={onSelect}>{cells}</button>
@@ -168,7 +168,7 @@ function ApprovalSection({ entry }: { entry: QueueEntry }) {
     {!entry.triage
       ? <p className="field-hint">Waiting for the patient’s symptoms. You can approve once they arrive.</p>
       : entry.needs_earlier_visit
-        ? <p className="field-hint">The priority is <b>{entry.urgency}</b>, so they should be seen {limit}. This time is later than that: offer an earlier time below, or approve it if this time is right.</p>
+        ? <p className="field-hint">The priority is <b>{entry.urgency}</b>, so they should be seen {limit}. This time is later than that: propose earlier times below, or approve it if this time is right.</p>
         : <p className="field-hint">Priority <b>{entry.urgency}</b>{limit ? ` (to be seen ${limit})` : ''}. The requested time fits.</p>}
     <div className="request-actions">
       <button type="button" className="button button-primary" disabled={!entry.triage || busy !== null} onClick={() => act('approve')}>

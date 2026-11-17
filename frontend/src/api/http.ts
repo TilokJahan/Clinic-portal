@@ -67,12 +67,17 @@ function subscribe<T>(path: string, event: string, onData: (data: T) => void, on
 }
 
 export const httpApi: Api = {
-  getSlots(date, providerId) {
+  getSlots(date, providerId, options) {
     const params = new URLSearchParams({ date })
     if (providerId) params.set('provider_id', String(providerId))
+    if (options?.includeBooked) params.set('include_booked', 'true')
+    if (options?.urgent) params.set('urgent', 'true')
     return request(`/slots?${params}`)
   },
-  book: (slotId, symptoms) => request('/appointments', json('POST', { slot_id: slotId, symptoms })),
+  assess: (symptoms) => request('/assessments', json('POST', { symptoms })),
+  timeframeAvailability: (priority) => request(`/slots/timeframes${priority ? `?priority=${priority}` : ''}`),
+  book: (slotId, { assessmentId, symptoms }) =>
+    request('/appointments', json('POST', { slot_id: slotId, assessment_id: assessmentId, symptoms })),
   approve: (appointmentId) => request(`/appointments/${appointmentId}/approve`, { method: 'POST' }),
   decline: (appointmentId, reason) =>
     request(`/appointments/${appointmentId}/decline`, json('POST', { reason: reason || null })),
@@ -99,14 +104,16 @@ export const httpApi: Api = {
   approveLabExplanation: (reportId, text) =>
     request(`/lab-reports/${reportId}`, json('PATCH', { patient_explanation: text })),
   urgencyMatrix: () => request('/urgency-matrix'),
-  earliestSlots(withinHours, providerId) {
+  earliestSlots(withinHours, providerId, urgent) {
     const params = new URLSearchParams({ within_hours: String(withinHours) })
     if (providerId) params.set('provider_id', String(providerId))
+    if (urgent) params.set('urgent', 'true')
     return request(`/slots/earliest?${params}`)
   },
-  nextAvailable(afterHours, providerId) {
+  nextAvailable(afterHours, providerId, urgent) {
     const params = new URLSearchParams({ after_hours: String(afterHours) })
     if (providerId) params.set('provider_id', String(providerId))
+    if (urgent) params.set('urgent', 'true')
     return request(`/slots/next-available?${params}`)
   },
   scheduleOptions(appointmentId, withinHours) {
@@ -119,7 +126,10 @@ export const httpApi: Api = {
   offerEarlierVisit: (appointmentId, slotId) =>
     request(`/appointments/${appointmentId}/reschedule-offers`, json('POST', { slot_id: slotId })),
   acceptOffer: (offerId) => request(`/reschedule-offers/${offerId}/accept`, { method: 'POST' }),
-  declineOffer: (offerId) => request(`/reschedule-offers/${offerId}/decline`, { method: 'POST' }),
+  declineOffer: (offerId, note) => request(`/reschedule-offers/${offerId}/decline`, json('POST', { note: note || null })),
+  alternativeSlots: (appointmentId) => request(`/appointments/${appointmentId}/alternative-slots`),
+  propose: (appointmentId, slotIds) =>
+    request(`/appointments/${appointmentId}/proposals`, json('POST', { slot_ids: slotIds })),
   async labReportFile(reportId) {
     const response = await send(`/lab-reports/${reportId}/file`, undefined, false)
     if (!response) return unreachable
