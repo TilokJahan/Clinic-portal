@@ -1,5 +1,5 @@
 import { endSession, sessionToken as getToken } from '../session'
-import type { Api, ApiResult } from '../types'
+import type { Api, ApiResult, StreamStatus } from '../types'
 
 // The appointment service, reached through the dev-server proxy or nginx (see vite.config.ts and
 // nginx.conf), so the browser never needs CORS.
@@ -40,6 +40,32 @@ async function request<T>(path: string, init?: RequestInit, json = true): Promis
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
 
+/** Server-Sent Events with reconnects. EventSource can't send headers, so the token goes in the
+ *  URL (only for stream endpoints). On error we reconnect with a fresh token, since Entra ID
+ *  tokens expire after about an hour. Returns unsubscribe. */
+function subscribe<T>(path: string, event: string, onData: (data: T) => void, onStatus: (s: StreamStatus) => void): () => void {
+  let source: EventSource | null = null
+  let closed = false
+  let retry: ReturnType<typeof setTimeout> | undefined
+  async function connect() {
+    onStatus(source ? 'reconnecting' : 'connecting')
+    const token = await getToken()
+    if (closed) return
+    source = new EventSource(`${BASE}${path}?access_token=${encodeURIComponent(token ?? '')}`)
+    source.addEventListener(event, (e) => onData(JSON.parse((e as MessageEvent).data)))
+    source.onopen = () => onStatus('live')
+    source.onerror = async () => {
+      source?.close()
+      onStatus('reconnecting')
+      // EventSource hides the status code. Ask /me: a 401 there ends the session (see request)
+      const me = await request('/me')
+      if (!closed && (me.ok || me.status !== 401)) retry = setTimeout(connect, 3000)
+    }
+  }
+  void connect()
+  return () => { closed = true; clearTimeout(retry); source?.close() }
+}
+
 export const httpApi: Api = {
   getSlots(date, providerId) {
     const params = new URLSearchParams({ date })
@@ -51,30 +77,9 @@ export const httpApi: Api = {
   submitIntake: (appointmentId, symptoms) =>
     request('/intake', json('POST', { appointment_id: appointmentId, symptoms })),
   getQueue: () => request('/queue'),
-  subscribeQueue(onQueue, onStatus) {
-    // EventSource can't send headers, so the token goes in the URL (only for this endpoint).
-    // On error we reconnect with a fresh token, since Entra ID tokens expire after about an hour.
-    let source: EventSource | null = null
-    let closed = false
-    let retry: ReturnType<typeof setTimeout> | undefined
-    async function connect() {
-      onStatus(source ? 'reconnecting' : 'connecting')
-      const token = await getToken()
-      if (closed) return
-      source = new EventSource(`${BASE}/queue/stream?access_token=${encodeURIComponent(token ?? '')}`)
-      source.addEventListener('queue', (event) => onQueue(JSON.parse((event as MessageEvent).data)))
-      source.onopen = () => onStatus('live')
-      source.onerror = async () => {
-        source?.close()
-        onStatus('reconnecting')
-        // EventSource hides the status code. Ask /me: a 401 there ends the session (see request)
-        const me = await request('/me')
-        if (!closed && (me.ok || me.status !== 401)) retry = setTimeout(connect, 3000)
-      }
-    }
-    void connect()
-    return () => { closed = true; clearTimeout(retry); source?.close() }
-  },
+  subscribeQueue: (onQueue, onStatus) => subscribe('/queue/stream', 'queue', onQueue, onStatus),
+  subscribeMyAppointments: (onAppointments, onStatus) =>
+    subscribe('/appointments/stream', 'appointments', onAppointments, onStatus),
   review: (triageId, finalUrgency) => request(`/triage/${triageId}`, json('PATCH', { final_urgency: finalUrgency })),
   uploadLabReport(appointmentId, file) {
     const form = new FormData()

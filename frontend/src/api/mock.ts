@@ -182,7 +182,15 @@ function queue(): QueueEntry[] {
     })
 }
 
-const notify = () => listeners.forEach((l) => l(queue()))
+const patientListeners = new Set<(a: MyAppointment[]) => void>()
+const myAppointments = () => appointments
+  .filter((a) => a.patient_id === mockPatientId() && a.status !== 'cancelled')
+  .map((a) => myView(a.id))
+  .sort((x, y) => x.starts_at.localeCompare(y.starts_at))
+const notify = () => {
+  listeners.forEach((l) => l(queue()))
+  patientListeners.forEach((l) => l(myAppointments()))
+}
 
 /** What a patient may see: nothing but the status until a clinician approves. */
 function patientView(r: LabReport): LabReport {
@@ -282,10 +290,13 @@ export const mockApi: Api = {
   },
   async myAppointments() {
     await pause(150)
-    return ok(appointments
-      .filter((a) => a.patient_id === mockPatientId() && a.status !== 'cancelled')
-      .map((a) => myView(a.id))
-      .sort((x, y) => x.starts_at.localeCompare(y.starts_at)))
+    return ok(myAppointments())
+  },
+  subscribeMyAppointments(onAppointments, onStatus: (s: StreamStatus) => void) {
+    patientListeners.add(onAppointments)
+    onStatus('live')
+    setTimeout(() => onAppointments(myAppointments()), 0)
+    return () => { patientListeners.delete(onAppointments) }
   },
   async submitIntake(appointmentId, symptoms) {
     await pause(600)

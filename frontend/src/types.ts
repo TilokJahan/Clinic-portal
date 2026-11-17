@@ -208,6 +208,9 @@ export interface Api {
   /** Books for the signed-in patient (the backend takes the patient from the token). */
   book(slotId: number): Promise<ApiResult<Appointment>>
   myAppointments(): Promise<ApiResult<MyAppointment[]>>
+  /** Calls onAppointments with the patient's appointments on connect and after every change
+   *  (e.g. a clinician's offer). Returns unsubscribe. */
+  subscribeMyAppointments(onAppointments: (appointments: MyAppointment[]) => void, onStatus: (s: StreamStatus) => void): () => void
   submitIntake(appointmentId: number, symptoms: string): Promise<ApiResult<TriageRecord>>
   getQueue(): Promise<ApiResult<QueueEntry[]>>
   /** Calls onQueue with the full queue on connect and after every change. Returns unsubscribe. */

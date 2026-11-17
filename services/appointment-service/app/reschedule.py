@@ -5,6 +5,8 @@ move the intake and lab reports to it, cancel the old booking. The unique index 
 decides a race, so two patients can never end up in the same slot.
 """
 
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 import psycopg
@@ -13,6 +15,7 @@ from psycopg import errors
 
 from app import db, metrics
 from app.auth import Clinician, Patient
+from app.metrics import STREAM_CLIENTS
 from app.models import (
     MyAppointment,
     OfferResult,
@@ -68,6 +71,51 @@ def load_my_appointments(
 ) -> list[MyAppointment]:
     """A patient's bookings that aren't cancelled, soonest first, with any open offer."""
     rows = conn.execute(_MY_APPOINTMENTS_SQL, {"patient": patient_id, "only": only}).fetchall()
+    return _to_my_appointments(rows)
+
+
+async def my_appointment_events(
+    connect: Callable[[], Awaitable[psycopg.AsyncConnection]],
+    is_disconnected: Callable[[], Awaitable[bool]],
+    patient_id: int,
+    heartbeat_seconds: float = 15.0,
+) -> AsyncIterator[str]:
+    """Server-Sent Events for one patient: their appointments on connect, then again whenever
+    they change, e.g. when a clinician offers an earlier visit.
+
+    Listens on the same "queue_changed" NOTIFY channel as the clinician queue (it fires on any
+    change to appointments, triage, lab reports or offers) and sends only when this patient's
+    own list actually differs, so other patients' changes never reach them.
+    """
+    STREAM_CLIENTS.inc()
+    try:
+        async with await connect() as conn:
+            await conn.execute("LISTEN queue_changed")
+
+            async def snapshot() -> str:
+                cur = await conn.execute(
+                    _MY_APPOINTMENTS_SQL, {"patient": patient_id, "only": None}
+                )
+                items = _to_my_appointments(await cur.fetchall())
+                return json.dumps([a.model_dump(mode="json") for a in items])
+
+            last = await snapshot()
+            yield f"event: appointments\ndata: {last}\n\n"
+            while not await is_disconnected():
+                changed = False
+                async for _ in conn.notifies(timeout=heartbeat_seconds, stop_after=1):
+                    changed = True
+                current = await snapshot() if changed else last
+                if current != last:
+                    last = current
+                    yield f"event: appointments\ndata: {current}\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+    finally:
+        STREAM_CLIENTS.dec()
+
+
+def _to_my_appointments(rows: list[dict]) -> list[MyAppointment]:
     result = []
     for row in rows:
         offer = None

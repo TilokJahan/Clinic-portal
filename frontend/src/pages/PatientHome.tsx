@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Ambulance, ArrowDown, ArrowRight, Baby, Bean, Bone, Brain, CalendarDays, CalendarCheck, Ear, Heart, HeartPulse, MapPin, MessageCircle, Phone, ReceiptText, Ribbon, Salad, ScanFace, Save, ShieldCheck, Stethoscope, TestTube2 } from 'lucide-react'
-import { formatDateTime } from '../format'
+import { dayIsOver, formatDateTime } from '../format'
 import { addPatientMessage, loadPatientMessages, type PatientMessage } from '../patientMessages'
 import { api } from '../api'
 import { PatientLabCard } from '../LabPanels'
@@ -46,12 +46,29 @@ export function PatientHome({ patientId }: { patientId: number }) {
   const [messageError, setMessageError] = useState('')
   const [messageSaved, setMessageSaved] = useState(false)
   const messageSection = useRef<HTMLElement>(null)
-  const [upcoming, setUpcoming] = useState<MyAppointment[]>([])
+  const [appointments, setAppointments] = useState<MyAppointment[]>([])
   const [reload, setReload] = useState(0)
+  // Live: the stream sends the list on connect and again whenever it changes, e.g. when a
+  // clinician offers an earlier visit, so the patient never has to reload the page
+  useEffect(() => api.subscribeMyAppointments(setAppointments, () => {}), [patientId])
+  // After the patient answers an offer, fetch once too, in case the stream is reconnecting
   useEffect(() => {
-    api.myAppointments().then((r) => { if (r.ok) setUpcoming(r.data.filter((a) => Date.parse(a.starts_at) > Date.now())) })
-  }, [patientId, reload])
-  const next = upcoming[0]
+    if (reload === 0) return
+    api.myAppointments().then((r) => { if (r.ok) setAppointments(r.data) })
+  }, [reload])
+  // Re-render each minute so a visit moves to "today" and then to past visits on time
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  // A visit stays on the home page for the rest of its day, so it doesn't vanish the moment it
+  // starts; after that it moves to past visits. The API sends them soonest first.
+  const upcoming = appointments.filter((a) => !dayIsOver(a.starts_at))
+  const past = appointments.filter((a) => dayIsOver(a.starts_at)).reverse().slice(0, 5)
+  const started = (a: MyAppointment) => Date.parse(a.starts_at) <= Date.now()
+  const next = upcoming.find((a) => !started(a))
+  const today = upcoming.find(started)
 
   useEffect(() => {
     if (messageOpen) messageSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -90,11 +107,20 @@ export function PatientHome({ patientId }: { patientId: number }) {
           ? <><p>Next visit: {next.provider_name}, {formatDateTime(next.starts_at)}.{next.intake_submitted ? ' Your care team has your symptoms.' : ''}</p>
               {!next.intake_submitted && <NavLink to={`/intake?appointment=${next.id}`}>Describe your symptoms <ArrowRight size={15} /></NavLink>}
               <NavLink to={`/schedule?appointment=${next.id}`}>Change the time <ArrowRight size={15} /></NavLink></>
+          : today
+          ? <><p>Today’s visit: {today.provider_name}, {formatDateTime(today.starts_at)}. If you missed it, book a new time.</p>
+              <NavLink to="/book">Book an appointment <ArrowRight size={15} /></NavLink></>
           : <><p>No upcoming appointments. Find a time that works for you.</p><NavLink to="/book">Browse appointments <ArrowRight size={15} /></NavLink></>}
       </div>
       <div className="panel patient-info"><div className="info-icon lavender"><ShieldCheck /></div><h3>A note about symptom intake</h3><p>Your answers help the care team prepare. They don’t replace a medical evaluation.</p><NavLink to="/intake">Start an intake <ArrowRight size={15} /></NavLink></div>
     </section>
-    {next && <PatientLabCard appointmentId={next.id} />}
+    {(next ?? today) && <PatientLabCard appointmentId={(next ?? today)!.id} />}
+    {past.length > 0 && <section className="panel past-visits" aria-labelledby="past-visits-title">
+      <h3 id="past-visits-title">Past visits</h3>
+      <ul>
+        {past.map((a) => <li key={a.id}><span>{formatDateTime(a.starts_at)}</span><span>{a.provider_name}{a.specialty ? ` · ${a.specialty}` : ''}</span></li>)}
+      </ul>
+    </section>}
     <section className="patient-tools" aria-labelledby="patient-tools-title">
       <div className="patient-tools-heading">
         <div className="eyebrow">YOUR CARE, MADE SIMPLE</div>

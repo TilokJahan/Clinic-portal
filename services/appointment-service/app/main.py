@@ -20,6 +20,7 @@ from app.auth import (
     auth_mode,
     issue_dev_token,
     stream_clinician,
+    stream_patient,
 )
 from app.models import (
     Appointment,
@@ -35,7 +36,7 @@ from app.models import (
     UserOut,
 )
 from app.queue import TRIAGE_COLUMNS, load_queue, queue_events
-from app.reschedule import load_my_appointments
+from app.reschedule import load_my_appointments, my_appointment_events
 from app.triage import TriageServiceClient, get_triage_client
 from app.urgency import OPEN_TO_ALL, RESERVED_MESSAGE
 
@@ -141,6 +142,21 @@ def list_slots(
 def my_appointments(conn: Conn, user: Patient) -> list[MyAppointment]:
     """The signed-in patient's bookings that aren't cancelled, soonest first."""
     return load_my_appointments(conn, user.id)
+
+
+@app.get("/appointments/stream", response_class=StreamingResponse)
+async def stream_my_appointments(
+    request: Request,
+    connect: Annotated[object, Depends(db.get_async_connect)],
+    user: Annotated[CurrentUser, Depends(stream_patient)],
+) -> StreamingResponse:
+    """Server-Sent Events. Sends the patient's appointments on connect and again whenever they
+    change, so an offer or a moved visit shows up without reloading the page."""
+    return StreamingResponse(
+        my_appointment_events(connect, request.is_disconnected, user.id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/appointments", status_code=status.HTTP_201_CREATED)

@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 
 from app.models import TriageAssessment, Urgency
 from app.queue import queue_events
+from app.reschedule import my_appointment_events
 from app.triage import FALLBACK, TriageServiceClient, get_triage_client
 from tests.conftest import TEST_SCHEMA, as_user
 
@@ -193,6 +194,25 @@ def test_queue_hides_cancelled_and_completed_appointments(client, db, booked):
     assert [e["appointment_id"] for e in client.get("/queue", headers=CLINICIAN).json()] == [3]
 
 
+def test_queue_hides_booked_visits_long_past(client, db, booked):
+    """A booked visit that started over 12 hours ago was missed; a checked-in one stays."""
+    db.execute(
+        "UPDATE slots SET starts_at = now() - interval '13 hours', "
+        "ends_at = now() - interval '12 hours 30 minutes' WHERE id = 1"
+    )
+    db.execute(
+        "UPDATE slots SET starts_at = now() - interval '2 hours', "
+        "ends_at = now() - interval '90 minutes' WHERE id = 2"
+    )
+    db.execute(
+        "UPDATE slots SET starts_at = now() - interval '2 days', "
+        "ends_at = now() - interval '2 days' + interval '30 minutes' WHERE id = 3"
+    )
+    db.execute("UPDATE appointments SET status = 'checked_in' WHERE id = 3")
+    ids = [e["appointment_id"] for e in client.get("/queue", headers=CLINICIAN).json()]
+    assert sorted(ids) == [2, 3]
+
+
 # --- PATCH /triage/{id} ---------------------------------------------------------------------
 
 
@@ -235,6 +255,70 @@ def test_review_unknown_or_invalid(client, booked, triage):
         f"/triage/{triage_id}", json={"final_urgency": "whenever"}, headers=CLINICIAN
     )
     assert response.status_code == 422
+
+
+# --- GET /appointments/stream (patient) -----------------------------------------------------
+
+
+def test_patient_stream_pushes_a_clinician_offer_but_not_other_patients_changes(
+    database_url, db, booked
+):
+    # A free slot earlier than patient 1's visit, for the clinician to offer
+    db.execute(
+        "INSERT INTO slots (provider_id, starts_at, ends_at) "
+        "VALUES (1, '2029-12-03 09:00+00', '2029-12-03 09:30+00')"
+    )
+
+    async def connect():
+        return await psycopg.AsyncConnection.connect(
+            database_url,
+            autocommit=True,
+            row_factory=dict_row,
+            options=f"-c search_path={TEST_SCHEMA}",
+        )
+
+    async def never_disconnected():
+        return False
+
+    async def run():
+        events = my_appointment_events(connect, never_disconnected, 1, heartbeat_seconds=1)
+        first = await anext(events)
+        async with await connect() as other:
+            # Another patient's change: patient 1's list is the same, so nothing is sent
+            await other.execute(
+                "INSERT INTO triage_results (appointment_id, ai_urgency, summary) "
+                "VALUES (3, 'urgent', 'someone else')"
+            )
+            unrelated = await asyncio.wait_for(anext(events), timeout=5)
+            # The clinician offers patient 1 an earlier visit
+            await other.execute(
+                "INSERT INTO reschedule_offers (appointment_id, proposed_slot_id, offered_by) "
+                "VALUES (1, 4, 4)"
+            )
+        offered = await asyncio.wait_for(anext(events), timeout=5)
+        await events.aclose()
+        return first, unrelated, offered
+
+    first, unrelated, offered = asyncio.run(run())
+    assert first.startswith("event: appointments\ndata: ")
+    initial = json.loads(first.split("data: ", 1)[1])
+    assert [a["id"] for a in initial] == [1]
+    assert initial[0]["pending_offer"] is None
+    assert unrelated == ": keep-alive\n\n"
+    assert offered.startswith("event: appointments\ndata: ")
+    updated = json.loads(offered.split("data: ", 1)[1])
+    assert updated[0]["pending_offer"]["slot_id"] == 4
+
+
+def test_patient_stream_needs_a_patient(client, db, booked, monkeypatch):
+    from contextlib import nullcontext
+
+    from app import db as app_db
+
+    # The stream looks the user up on its own short connection; point it at the test schema
+    monkeypatch.setattr(app_db, "connection", lambda: nullcontext(db))
+    assert client.get("/appointments/stream").status_code == 401
+    assert client.get("/appointments/stream", headers=CLINICIAN).status_code == 403
 
 
 # --- GET /queue/stream ----------------------------------------------------------------------
