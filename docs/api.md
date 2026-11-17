@@ -10,6 +10,7 @@ Every change to this file goes through a pull request that all three of us revie
 | GET | `/slots?date=YYYY-MM-DD&provider_id=` | appointment | any | List free slots | done |
 | POST | `/appointments` | appointment | patient | Book a slot | done |
 | GET | `/appointments` | appointment | patient | My bookings | done |
+| GET | `/appointments/stream` | appointment | patient | Server-Sent Events: my bookings, live | done |
 | POST | `/intake` | appointment | patient | Submit symptoms (calls triage-service) | done |
 | GET | `/queue` | appointment | clinician | Waiting patients, most urgent first | done |
 | GET | `/queue/stream` | appointment | clinician | Server-Sent Events for live updates | done |
@@ -131,8 +132,9 @@ The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the sa
   operator settings `CLINICIAN_EMAILS` / `LAB_TECH_EMAILS` / `ADMIN_EMAILS` get that role when they
   sign in (an email on several lists gets the most privileged role). A token
   can never change anyone's role.
-- `GET /queue/stream` also accepts the token as `?access_token=...`, because the browser's
-  `EventSource` can't send headers. Only that endpoint should use it.
+- `GET /queue/stream` and `GET /appointments/stream` also accept the token as
+  `?access_token=...`, because the browser's `EventSource` can't send headers. Only those
+  endpoints should use it.
 
 | Status | When | Body |
 |---|---|---|
@@ -210,7 +212,8 @@ safe fallback: `urgency: "soon"` and a summary saying a clinician should review 
 
 ### `GET /queue` (clinician)
 
-Returns `QueueEntry[]` for appointments that are `booked` or `checked_in`. Order: `urgent`, then
+Returns `QueueEntry[]` for appointments that are `checked_in`, or `booked` and started less than
+12 hours ago (an older booked visit was missed, and the patient's page lists it as past). Order: `urgent`, then
 `soon`, then `routine`; within the same urgency, whoever submitted their intake first; patients
 without an intake come last, by appointment time.
 
@@ -224,6 +227,18 @@ without an intake come last, by appointment time.
 - When nothing changes for 15 seconds it sends a comment line (`: keep-alive`), which
   `EventSource` ignores.
 - Changes are delivered through Postgres `LISTEN/NOTIFY`, so this works with several replicas.
+
+### `GET /appointments/stream` (patient)
+
+Server-Sent Events for the signed-in patient's own bookings, so their home page updates the
+moment a clinician offers an earlier visit or a booking moves.
+
+- On connect it sends `event: appointments` with `data:` set to the same JSON array as
+  `GET /appointments`, and again whenever that list changes.
+- It listens on the same NOTIFY channel as `/queue/stream`, but only sends when this patient's
+  list actually differs, so other patients' changes never reach them. Otherwise it sends
+  `: keep-alive` every 15 seconds.
+- 401 without a token, 403 for any role but patient.
 
 ### `PATCH /triage/{id}` (clinician)
 

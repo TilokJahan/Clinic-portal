@@ -13,6 +13,13 @@ export const formatDay = (iso: string) =>
 
 export const formatDateTime = (iso: string) => `${formatDay(iso)}, ${formatTime(iso)} ${timeZoneName(iso)}`
 
+/** True once the local calendar day of `iso` is over: a visit stays "today's" until midnight. */
+export function dayIsOver(iso: string, now = new Date()): boolean {
+  const end = new Date(iso)
+  end.setHours(24, 0, 0, 0)
+  return end.getTime() <= now.getTime()
+}
+
 export const todayLong = () =>
   new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()
 

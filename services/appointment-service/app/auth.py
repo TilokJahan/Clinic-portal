@@ -156,23 +156,32 @@ def current_user(
     return decode(token, conn)
 
 
-def stream_clinician(
-    access_token: Annotated[str | None, Query(include_in_schema=False)] = None,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
-) -> CurrentUser:
-    """Like require("clinician", "admin") for the long-lived SSE stream.
+def _stream_user(*roles: str):
+    """Like require(*roles) for a long-lived SSE stream.
 
-    Uses a short-lived connection for the lookup, so an open stream doesn't keep a pooled
-    connection checked out for hours.
+    EventSource can't send headers, so the token may come in the URL instead. Uses a short-lived
+    connection for the lookup, so an open stream doesn't keep a pooled connection checked out
+    for hours.
     """
-    token = credentials.credentials if credentials else access_token
-    if not token:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in required")
-    with db.connection() as conn:
-        user = decode(token, conn)
-    if user.role not in ("clinician", "admin"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed for your role")
-    return user
+
+    def check(
+        access_token: Annotated[str | None, Query(include_in_schema=False)] = None,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
+    ) -> CurrentUser:
+        token = credentials.credentials if credentials else access_token
+        if not token:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in required")
+        with db.connection() as conn:
+            user = decode(token, conn)
+        if user.role not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed for your role")
+        return user
+
+    return check
+
+
+stream_clinician = _stream_user("clinician", "admin")
+stream_patient = _stream_user("patient")
 
 
 def require(*roles: str):

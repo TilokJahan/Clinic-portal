@@ -188,6 +188,11 @@ h1 .wave { margin-left: 4px; color: #d9a85f; font-size: 20px; }
 .hero-art { position: relative; width: clamp(330px, 34vw, 430px); height: 320px; display: grid; place-items: center; flex: 0 0 auto; }
 .patient-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 17px; }
 .patient-info { padding: 20px; }
+.past-visits { padding: 20px; margin-top: 15px; }
+.past-visits h3 { margin: 0 0 10px; }
+.past-visits ul { list-style: none; margin: 0; padding: 0; }
+.past-visits li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; padding: 9px 0; border-top: 1px solid var(--line, #e3e8e6); font-size: 14px; }
+.past-visits li span:last-child { color: var(--muted, #5b6b66); }
 .patient-info h3 { margin: 0 0 7px; color: #183a55; font: 700 16px Manrope; }
 .patient-info p { max-width: 340px; margin: 0 0 14px; color: #758891; font-size: 12px; line-height: 1.6; }
 .info-icon { margin-bottom: 13px; }

@@ -36,7 +36,7 @@ metadata:
   name: app
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
-    # Server-Sent Events (/api/queue/stream): keep the connection open and unbuffered
+    # Server-Sent Events (/api/queue/stream, /api/appointments/stream): keep the connection open and unbuffered
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     # Lab report uploads (up to 10 MB)

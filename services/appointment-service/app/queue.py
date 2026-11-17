@@ -26,8 +26,14 @@ LATEST_VISIT = (
     f"WHEN 'soon' THEN interval '{SEEN_WITHIN_HOURS[Urgency.SOON]} hours' END"
 )
 
-# Waiting patients (booked or checked in). Most urgent first; within the same urgency, whoever
-# sent their intake or lab report first; patients with neither go last, by appointment time.
+# A booked visit stays in the queue this long after its start time (a late arrival, or a check-in
+# not recorded yet). After that the patient didn't come: the visit is past, and the patient's own
+# page no longer lists it as upcoming either, so it would only clutter the queue.
+MISSED_AFTER_HOURS = 12
+
+# Waiting patients (checked in, or booked and not long past). Most urgent first; within the same
+# urgency, whoever sent their intake or lab report first; patients with neither go last, by
+# appointment time.
 QUEUE_SQL = f"""
     SELECT a.id AS appointment_id, a.patient_id, a.status, a.created_at AS booked_at,
            s.starts_at, p.id AS provider_id, p.name AS provider_name,
@@ -52,7 +58,9 @@ QUEUE_SQL = f"""
         SELECT * FROM lab_reports lr WHERE lr.appointment_id = a.id
         ORDER BY lr.uploaded_at DESC LIMIT 1
     ) l ON true
-    WHERE a.status IN ('booked', 'checked_in')
+    WHERE a.status = 'checked_in'
+       OR (a.status = 'booked'
+           AND s.starts_at > now() - interval '{MISSED_AFTER_HOURS} hours')
     ORDER BY
         CASE {EFFECTIVE_URGENCY}
             WHEN 'urgent' THEN 0 WHEN 'soon' THEN 1 WHEN 'routine' THEN 2 ELSE 3
