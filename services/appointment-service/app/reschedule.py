@@ -47,6 +47,8 @@ OFFER_PENDING = f"""EXISTS (
 _MY_APPOINTMENTS_SQL = f"""
     SELECT a.id, a.slot_id, a.status, a.created_at, s.starts_at,
            p.name AS provider_name, p.specialty, t.id IS NOT NULL AS intake_submitted,
+           a.approved_at IS NOT NULL AS approved, a.declined_at IS NOT NULL AS declined,
+           a.decline_reason,
            po.id AS offer_id, po.slot_id AS offer_slot_id, po.starts_at AS offer_starts_at,
            po.provider_name AS offer_provider_name
     FROM appointments a
@@ -60,7 +62,10 @@ _MY_APPOINTMENTS_SQL = f"""
         JOIN providers np ON np.id = ns.provider_id
         WHERE o.appointment_id = a.id AND {_LIVE}
     ) po ON true
-    WHERE a.patient_id = %(patient)s AND a.status <> 'cancelled'
+    WHERE a.patient_id = %(patient)s
+      -- Cancelled bookings are left out, except a declined request whose time hasn't come yet:
+      -- the patient needs to see it was declined, and why
+      AND (a.status <> 'cancelled' OR (a.declined_at IS NOT NULL AND s.starts_at > now()))
       AND (%(only)s::bigint IS NULL OR a.id = %(only)s)
     ORDER BY s.starts_at
 """
@@ -69,7 +74,8 @@ _MY_APPOINTMENTS_SQL = f"""
 def load_my_appointments(
     conn: psycopg.Connection, patient_id: int, only: int | None = None
 ) -> list[MyAppointment]:
-    """A patient's bookings that aren't cancelled, soonest first, with any open offer."""
+    """A patient's bookings, soonest first, with any open offer. Cancelled ones are left out,
+    except a declined request whose time hasn't come yet."""
     rows = conn.execute(_MY_APPOINTMENTS_SQL, {"patient": patient_id, "only": only}).fetchall()
     return _to_my_appointments(rows)
 
@@ -148,7 +154,8 @@ def _booked_appointment(conn: psycopg.Connection, appointment_id: int) -> dict:
 
 @router.get("/appointments/{appointment_id}/earlier-slots")
 def earlier_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
-    """Free, upcoming slots with the same provider that start before this visit (at most 10).
+    """Free, upcoming slots with any provider that start before this visit (at most 10),
+    soonest first; at the same time, the patient's own provider comes first.
 
     Includes the urgent reserve: offering it to an urgent patient is what it is for.
     """
@@ -160,9 +167,8 @@ def earlier_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
         FROM slots s
         JOIN providers p ON p.id = s.provider_id
         LEFT JOIN appointments a ON a.slot_id = s.id AND a.status <> 'cancelled'
-        WHERE a.id IS NULL AND s.provider_id = %(provider)s
-          AND s.starts_at > now() AND s.starts_at < %(before)s
-        ORDER BY s.starts_at
+        WHERE a.id IS NULL AND s.starts_at > now() AND s.starts_at < %(before)s
+        ORDER BY s.starts_at, s.provider_id <> %(provider)s, s.provider_id
         LIMIT 10
         """,
         {"provider": current["provider_id"], "before": current["starts_at"]},
@@ -262,7 +268,7 @@ def _accept(conn: psycopg.Connection, patient_id: int, offer_id: int) -> int | s
     with conn.transaction():
         offer = conn.execute(
             """
-            SELECT o.status, o.appointment_id, o.proposed_slot_id, a.patient_id,
+            SELECT o.status, o.appointment_id, o.proposed_slot_id, o.offered_by, a.patient_id,
                    a.status AS appointment_status, s.starts_at > now() AS upcoming
             FROM reschedule_offers o
             JOIN appointments a ON a.id = o.appointment_id
@@ -302,6 +308,11 @@ def _accept(conn: psycopg.Connection, patient_id: int, offer_id: int) -> int | s
         conn.execute(
             "UPDATE reschedule_offers SET status = 'accepted', responded_at = now() WHERE id = %s",
             (offer_id,),
+        )
+        # The clinician chose this time, so it needs no further approval
+        conn.execute(
+            "UPDATE appointments SET approved_at = now(), approved_by = %s WHERE id = %s",
+            (offer["offered_by"], new_id),
         )
         return new_id
 

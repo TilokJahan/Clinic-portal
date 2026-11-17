@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import db, labs, metrics, reschedule, scheduling
+from app import approval, db, labs, metrics, reschedule, scheduling
 from app.auth import (
     AnyUser,
     Clinician,
@@ -31,6 +31,7 @@ from app.models import (
     QueueEntry,
     Slot,
     TokenResponse,
+    TriageAssessment,
     TriageRecord,
     TriageReview,
     UserOut,
@@ -50,6 +51,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
+app.include_router(approval.router)
 app.include_router(labs.router)
 app.include_router(reschedule.router)
 app.include_router(scheduling.router)
@@ -140,7 +142,7 @@ def list_slots(
 
 @app.get("/appointments")
 def my_appointments(conn: Conn, user: Patient) -> list[MyAppointment]:
-    """The signed-in patient's bookings that aren't cancelled, soonest first."""
+    """The signed-in patient's bookings, soonest first (see load_my_appointments)."""
     return load_my_appointments(conn, user.id)
 
 
@@ -160,8 +162,18 @@ async def stream_my_appointments(
 
 
 @app.post("/appointments", status_code=status.HTTP_201_CREATED)
-def book_appointment(conn: Conn, user: Patient, body: AppointmentCreate) -> Appointment:
-    """Book a slot for the signed-in patient. 409 if it is already booked or has started."""
+def book_appointment(
+    conn: Conn, user: Patient, triage: Triage, body: AppointmentCreate
+) -> Appointment:
+    """Request a slot for the signed-in patient. 409 if it is already taken or has started.
+
+    The slot is held at once, and the request waits for a clinician's approval. With symptoms,
+    the triage service assesses them first, so the clinician sees the urgency with the request.
+    """
+    assessment = None
+    if body.symptoms is not None:
+        # Before the transaction: the AI call takes seconds and shouldn't hold a lock
+        assessment, latency_ms = _assess(triage, body.symptoms)
     try:
         with conn.transaction():
             slot = conn.execute(
@@ -179,10 +191,12 @@ def book_appointment(conn: Conn, user: Patient, body: AppointmentCreate) -> Appo
             row = conn.execute(
                 """
                 INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s)
-                RETURNING id, patient_id, slot_id, status, created_at
+                RETURNING id, patient_id, slot_id, status, created_at, approved_at
                 """,
                 (user.id, body.slot_id),
             ).fetchone()
+            if assessment is not None:
+                _store_triage(conn, row["id"], assessment, latency_ms)
     except errors.UniqueViolation as exc:
         # The unique index on active appointments catches double booking, even concurrent ones.
         metrics.BOOKING_CONFLICTS.labels("already_booked").inc()
@@ -213,35 +227,48 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
     if appointment["triage_id"] is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Intake already submitted")
 
-    assessment, latency_ms = triage.assess(body.symptoms)
-    metrics.TRIAGE_CALL_SECONDS.observe(latency_ms / 1000)
-    if assessment.fallback:
-        metrics.TRIAGE_FALLBACKS.inc()
+    assessment, latency_ms = _assess(triage, body.symptoms)
     try:
         with conn.transaction():
-            row = conn.execute(
-                f"""
-                INSERT INTO triage_results AS t
-                    (appointment_id, ai_urgency, suggested_specialty, red_flags, summary,
-                     latency_ms, tokens_used)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING {TRIAGE_COLUMNS}
-                """,
-                (
-                    body.appointment_id,
-                    assessment.urgency,
-                    assessment.suggested_specialty,
-                    assessment.red_flags,
-                    assessment.summary,
-                    latency_ms,
-                    assessment.tokens_used,
-                ),
-            ).fetchone()
+            row = _store_triage(conn, body.appointment_id, assessment, latency_ms)
     except errors.UniqueViolation as exc:
         # Two intakes for the same appointment raced each other
         raise HTTPException(status.HTTP_409_CONFLICT, "Intake already submitted") from exc
-    metrics.INTAKES.labels(assessment.urgency.value).inc()
     return TriageRecord.model_validate(row)
+
+
+def _assess(triage: TriageServiceClient, symptoms: str) -> tuple[TriageAssessment, int]:
+    assessment, latency_ms = triage.assess(symptoms)
+    metrics.TRIAGE_CALL_SECONDS.observe(latency_ms / 1000)
+    if assessment.fallback:
+        metrics.TRIAGE_FALLBACKS.inc()
+    return assessment, latency_ms
+
+
+def _store_triage(
+    conn: psycopg.Connection, appointment_id: int, assessment: TriageAssessment, latency_ms: int
+) -> dict:
+    """Store only the structured result. The symptom text is never written to the database."""
+    row = conn.execute(
+        f"""
+        INSERT INTO triage_results AS t
+            (appointment_id, ai_urgency, suggested_specialty, red_flags, summary,
+             latency_ms, tokens_used)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING {TRIAGE_COLUMNS}
+        """,
+        (
+            appointment_id,
+            assessment.urgency,
+            assessment.suggested_specialty,
+            assessment.red_flags,
+            assessment.summary,
+            latency_ms,
+            assessment.tokens_used,
+        ),
+    ).fetchone()
+    metrics.INTAKES.labels(assessment.urgency.value).inc()
+    return row
 
 
 @app.get("/queue")

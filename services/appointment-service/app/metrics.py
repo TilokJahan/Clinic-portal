@@ -34,6 +34,9 @@ REVIEWS = Counter("triage_reviews_total", "Clinician decisions", ["outcome"])  #
 RESCHEDULE_OFFERS = Counter(
     "reschedule_offers_total", "Earlier-visit offers, by outcome", ["outcome"]
 )  # offered / accepted / declined / expired
+APPROVALS = Counter(
+    "booking_approvals_total", "Booking requests a clinician decided, by decision", ["decision"]
+)  # approved / declined
 PATIENT_RESCHEDULES = Counter(
     "patient_reschedules_total", "Visits a patient moved to a time they chose in their timeframe"
 )
@@ -67,6 +70,8 @@ for _status in ("ready", "needs_review", "failed"):
     LAB_PROCESSED.labels(_status)
 for _outcome in ("offered", "accepted", "declined", "expired"):
     RESCHEDULE_OFFERS.labels(_outcome)
+for _decision in ("approved", "declined"):
+    APPROVALS.labels(_decision)
 
 
 def install(app: FastAPI) -> None:

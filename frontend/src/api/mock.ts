@@ -28,6 +28,8 @@ const labFiles = new Map<number, Blob>()
 // listed, but booking it returns 409, so the conflict message can be demoed.
 const takenByOthers = new Set<number>()
 let nextId = 1000
+// Requests a clinician declined: appointment id -> the reason shown to the patient
+const declines = new Map<number, string | null>()
 const listeners = new Set<(q: QueueEntry[]) => void>()
 const offers: { id: number; appointment_id: number; slot_id: number; status: RescheduleOffer['status']; created_at: string }[] = []
 
@@ -96,8 +98,9 @@ const liveOffer = (appointmentId: number) => offers.find((o) => o.appointment_id
   && Date.parse(slots.get(o.slot_id)!.starts_at) > Date.now() && !isActive(o.slot_id))
 
 /** Book the slot, move the intake and lab reports over, cancel the old visit (app/reschedule.py). */
-function moveBooking(old: Appointment, slotId: number): Appointment {
-  const moved: Appointment = { id: nextId++, patient_id: old.patient_id, slot_id: slotId, status: 'booked', created_at: new Date().toISOString() }
+function moveBooking(old: Appointment, slotId: number, approved = false): Appointment {
+  const now = new Date().toISOString()
+  const moved: Appointment = { id: nextId++, patient_id: old.patient_id, slot_id: slotId, status: 'booked', created_at: now, approved_at: approved ? now : null }
   appointments.push(moved)
   triage.filter((t) => t.appointment_id === old.id).forEach((t) => { t.appointment_id = moved.id })
   labReports.filter((r) => r.appointment_id === old.id).forEach((r) => { r.appointment_id = moved.id })
@@ -158,7 +161,7 @@ function queue(): QueueEntry[] {
         appointment_id: a.id, patient_label: `Patient ${String(a.patient_id).padStart(4, '0')}`,
         provider_id: slot.provider_id, provider_name: slot.provider_name, starts_at: slot.starts_at,
         status: a.status, booked_at: a.created_at, triage: triage.find((t) => t.appointment_id === a.id) ?? null,
-        lab: null, urgency: null,
+        lab: null, urgency: null, awaiting_approval: a.status === 'booked' && !a.approved_at,
       } as QueueEntry
     })
     .map((e) => {
@@ -184,7 +187,8 @@ function queue(): QueueEntry[] {
 
 const patientListeners = new Set<(a: MyAppointment[]) => void>()
 const myAppointments = () => appointments
-  .filter((a) => a.patient_id === mockPatientId() && a.status !== 'cancelled')
+  .filter((a) => a.patient_id === mockPatientId()
+    && (a.status !== 'cancelled' || (declines.has(a.id) && Date.parse(slots.get(a.slot_id)!.starts_at) > Date.now())))
   .map((a) => myView(a.id))
   .sort((x, y) => x.starts_at.localeCompare(y.starts_at))
 const notify = () => {
@@ -245,7 +249,8 @@ function pendingOfferFor(appointmentId: number): PendingOffer | null {
 function myView(id: number): MyAppointment {
   const a = appointments.find((x) => x.id === id)!, slot = slots.get(a.slot_id)!
   return { id: a.id, slot_id: a.slot_id, status: a.status, created_at: a.created_at, starts_at: slot.starts_at, provider_name: slot.provider_name,
-    specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id), pending_offer: pendingOfferFor(a.id) }
+    specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id), pending_offer: pendingOfferFor(a.id),
+    approved: Boolean(a.approved_at), declined: declines.has(a.id), decline_reason: declines.get(a.id) ?? null }
 }
 
 // Seed a few waiting patients for the clinician screens
@@ -260,7 +265,9 @@ function myView(id: number): MyAppointment {
     [1, 8, null, 0],
   ]
   for (const [patient, slotIndex, t, mins] of seeds) {
-    const appt: Appointment = { id: nextId++, patient_id: patient, slot_id: day[slotIndex].id, status: 'booked', created_at: minutesAgo(mins + 30) }
+    // The routine one is a request still waiting for approval, so the clinician screens show one
+    const waiting = t?.ai_urgency === 'routine'
+    const appt: Appointment = { id: nextId++, patient_id: patient, slot_id: day[slotIndex].id, status: 'booked', created_at: minutesAgo(mins + 30), approved_at: waiting ? null : minutesAgo(mins) }
     appointments.push(appt)
     if (t) addTriage(appt.id, t, mins)
   }
@@ -274,7 +281,7 @@ export const mockApi: Api = {
     const booked = new Set(appointments.filter((a) => a.status !== 'cancelled').map((a) => a.slot_id))
     return ok(slotsFor(date).filter((s) => !booked.has(s.id) && !takenByOthers.has(s.id) && !reserveClosed(s) && Date.parse(s.starts_at) > now && (!providerId || s.provider_id === providerId)).map(view))
   },
-  async book(slotId) {
+  async book(slotId, symptoms) {
     await pause(400)
     const patientId = mockPatientId()
     const slot = slots.get(slotId)
@@ -283,8 +290,33 @@ export const mockApi: Api = {
     if (takenByOthers.has(slotId) || appointments.some((a) => a.slot_id === slotId && a.status !== 'cancelled'))
       return fail(409, 'Slot is already booked')
     if (reserveClosed(slot)) return fail(409, RESERVED_MESSAGE)
-    const appt: Appointment = { id: nextId++, patient_id: patientId, slot_id: slotId, status: 'booked', created_at: new Date().toISOString() }
+    if (symptoms !== undefined && (!symptoms.trim() || symptoms.length > 4000)) return fail(422, 'Please check the form and try again.')
+    const appt: Appointment = { id: nextId++, patient_id: patientId, slot_id: slotId, status: 'booked', created_at: new Date().toISOString(), approved_at: null }
     appointments.push(appt)
+    if (symptoms) addTriage(appt.id, fakeTriage(symptoms))
+    notify()
+    return ok(appt)
+  },
+  async approve(appointmentId) {
+    await pause(250)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'This request is no longer open')
+    if (appt.approved_at) return fail(409, 'Already approved')
+    if (!triage.some((t) => t.appointment_id === appointmentId)) return fail(409, "The patient hasn't described their symptoms yet")
+    appt.approved_at = new Date().toISOString()
+    notify()
+    return ok(appt)
+  },
+  async decline(appointmentId, reason) {
+    await pause(250)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked') return fail(409, 'This request is no longer open')
+    if (appt.approved_at) return fail(409, 'Already approved')
+    offers.filter((o) => o.appointment_id === appointmentId && o.status === 'pending').forEach((o) => { o.status = 'expired' })
+    appt.status = 'cancelled'
+    declines.set(appointmentId, reason.trim() || null)
     notify()
     return ok(appt)
   },
@@ -412,7 +444,7 @@ export const mockApi: Api = {
     if (!appt) return fail(404, 'Appointment not found')
     if (appt.status !== 'booked') return fail(409, 'Appointment is not booked')
     const current = slots.get(appt.slot_id)!
-    return ok(freeSlotsWithin(14 * 24, current.provider_id, 50, true).filter((s) => s.starts_at < current.starts_at).slice(0, 10))
+    return ok(freeSlotsWithin(14 * 24, undefined, 200, true).filter((s) => s.starts_at < current.starts_at).slice(0, 10))
   },
   async offerEarlierVisit(appointmentId, slotId) {
     await pause(300)
@@ -436,7 +468,7 @@ export const mockApi: Api = {
     if (!offer || !appt) return fail(404, 'Offer not found')
     if (offer.status !== 'pending') return fail(409, 'This offer is no longer available')
     if (isActive(offer.slot_id)) { offer.status = 'expired'; return fail(409, 'That time was just taken') }
-    const moved = moveBooking(appt, offer.slot_id)
+    const moved = moveBooking(appt, offer.slot_id, true) // the clinician chose it: approved
     offer.status = 'accepted'
     notify()
     return ok(myView(moved.id))

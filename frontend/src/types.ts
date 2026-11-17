@@ -21,6 +21,8 @@ export interface Appointment {
   slot_id: number
   status: AppointmentStatus
   created_at: string
+  /** null while the request waits for a clinician's approval */
+  approved_at?: string | null
 }
 
 export interface TriageRecord {
@@ -116,6 +118,8 @@ export interface QueueEntry {
   needs_earlier_visit?: boolean
   /** An earlier visit was offered and the patient hasn't answered yet */
   offer_pending?: boolean
+  /** A booking request no clinician has approved yet */
+  awaiting_approval?: boolean
 }
 
 // Every API call resolves to this instead of throwing, so pages can show the server's message.
@@ -142,6 +146,11 @@ export interface MyAppointment {
   provider_name: string
   specialty: string
   intake_submitted: boolean
+  /** false while a clinician hasn't approved the request yet */
+  approved?: boolean
+  /** The care team declined the request (status is then 'cancelled'), with their reason if given */
+  declined?: boolean
+  decline_reason?: string | null
   /** An earlier visit the care team offered; the patient accepts or declines it */
   pending_offer?: PendingOffer | null
 }
@@ -205,8 +214,11 @@ export interface ScheduleOptions {
 
 export interface Api {
   getSlots(date: string, providerId?: number): Promise<ApiResult<Slot[]>>
-  /** Books for the signed-in patient (the backend takes the patient from the token). */
-  book(slotId: number): Promise<ApiResult<Appointment>>
+  /** Requests a time for the signed-in patient (the backend takes the patient from the token).
+   *  The symptoms go to triage with it; a clinician then approves the request. */
+  book(slotId: number, symptoms: string): Promise<ApiResult<Appointment>>
+  approve(appointmentId: number): Promise<ApiResult<Appointment>>
+  decline(appointmentId: number, reason: string): Promise<ApiResult<Appointment>>
   myAppointments(): Promise<ApiResult<MyAppointment[]>>
   /** Calls onAppointments with the patient's appointments on connect and after every change
    *  (e.g. a clinician's offer). Returns unsubscribe. */

@@ -154,7 +154,7 @@ export function OfferCard({ appointment, onAnswered }: { appointment: MyAppointm
   </section>
 }
 
-/** Clinician drawer: offer an urgent patient an earlier slot with the same provider. */
+/** Clinician drawer: offer the patient an earlier free time, with any provider. */
 export function ClinicianOfferSection({ entry }: { entry: QueueEntry }) {
   const [slots, setSlots] = useState<Slot[] | null>(null)
   const [chosen, setChosen] = useState<Slot | null>(null)
@@ -185,11 +185,13 @@ export function ClinicianOfferSection({ entry }: { entry: QueueEntry }) {
       : <>
         <p>{entry.needs_earlier_visit
           ? `The visit is later than a ${entry.urgency} priority allows (${entry.urgency === 'urgent' ? 'within 24 hours' : 'within 3 days'}). Offer an earlier time or call the patient; the patient decides.`
-          : 'Offer the patient an earlier time with the same provider. Nothing moves until they accept.'}</p>
+          : entry.awaiting_approval
+            ? 'Or offer a different, earlier time, with any doctor. If the patient accepts it, the visit is approved.'
+            : 'Offer the patient an earlier time, with any doctor. Nothing moves until they accept.'}</p>
         {slots === null
           ? <button type="button" className="button button-secondary" onClick={find}>Find earlier times</button>
           : slots.length === 0
-            ? <p className="field-hint">No earlier free times with {entry.provider_name}, including the urgent reserve. Call the patient to arrange care.</p>
+            ? <p className="field-hint">{formatDateTime(entry.starts_at)} is already the earliest free time with any doctor, including the urgent reserve.{entry.needs_earlier_visit ? ' Call the patient to arrange care sooner.' : ''}</p>
             : <><SlotChoices slots={slots} chosen={chosen} onChoose={setChosen} />
               <button type="button" className="button button-primary" disabled={!chosen || busy} onClick={offer}>{busy ? <Loader2 className="spin" size={16} /> : null}Offer this time</button></>}
       </>}

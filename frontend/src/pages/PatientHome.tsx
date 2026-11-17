@@ -64,8 +64,10 @@ export function PatientHome({ patientId }: { patientId: number }) {
   }, [])
   // A visit stays on the home page for the rest of its day, so it doesn't vanish the moment it
   // starts; after that it moves to past visits. The API sends them soonest first.
-  const upcoming = appointments.filter((a) => !dayIsOver(a.starts_at))
-  const past = appointments.filter((a) => dayIsOver(a.starts_at)).reverse().slice(0, 5)
+  const declined = appointments.filter((a) => a.declined)
+  const active = appointments.filter((a) => !a.declined)
+  const upcoming = active.filter((a) => !dayIsOver(a.starts_at))
+  const past = active.filter((a) => dayIsOver(a.starts_at)).reverse().slice(0, 5)
   const started = (a: MyAppointment) => Date.parse(a.starts_at) <= Date.now()
   const next = upcoming.find((a) => !started(a))
   const today = upcoming.find(started)
@@ -100,11 +102,22 @@ export function PatientHome({ patientId }: { patientId: number }) {
     <div className="patient-hero"><div className="patient-hero-inner"><div><div className="eyebrow">CLOUD CLINIC</div><h1>Your health, <em>in good hands.</em></h1><p>Book your next visit or tell us what’s going on. We’ll help your care team prepare.</p>
       <div className="hero-actions"><NavLink className="button button-primary" to="/book">Book an appointment <ArrowRight size={16} /></NavLink><NavLink className="button button-secondary" to="/intake">Share symptoms</NavLink></div></div>
       <div className="hero-art"><HeartPulse className="hero-heartbeat" size={270} strokeWidth={1.35} aria-hidden="true" /></div></div></div>
+    {declined.map((a) => <section className="panel offer-card declined-card" key={a.id} aria-labelledby={`declined-${a.id}`}>
+      <div className="info-icon lavender"><CalendarDays /></div>
+      <div>
+        <h3 id={`declined-${a.id}`}>Your request for {formatDateTime(a.starts_at)} wasn’t approved</h3>
+        <p>{a.decline_reason ? <>Your care team says: “{a.decline_reason}”</> : 'Your care team couldn’t confirm this time.'} Please choose another time, or call the clinic if you need help.</p>
+        <NavLink className="button button-primary" to="/book">Request another time <ArrowRight size={16} /></NavLink>
+      </div>
+    </section>)}
     {upcoming.filter((a) => a.pending_offer).map((a) => <OfferCard key={a.id} appointment={a} onAnswered={() => setReload((n) => n + 1)} />)}
     <section className="patient-info-grid">
       <div className="panel patient-info"><div className="info-icon mint"><CalendarDays /></div><h3>Your next step</h3>
         {next
-          ? <><p>Next visit: {next.provider_name}, {formatDateTime(next.starts_at)}.{next.intake_submitted ? ' Your care team has your symptoms.' : ''}</p>
+          ? <><p className="request-status">{next.approved === false ? 'Requested, waiting for approval' : 'Confirmed'}</p>
+              <p>{next.approved === false ? 'Requested visit' : 'Next visit'}: {next.provider_name}, {formatDateTime(next.starts_at)}.{next.approved === false
+                ? ' A clinician is reviewing your symptoms and will confirm this time or offer a better one.'
+                : next.intake_submitted ? ' Your care team has your symptoms.' : ''}</p>
               {!next.intake_submitted && <NavLink to={`/intake?appointment=${next.id}`}>Describe your symptoms <ArrowRight size={15} /></NavLink>}
               <NavLink to={`/schedule?appointment=${next.id}`}>Change the time <ArrowRight size={15} /></NavLink></>
           : today
