@@ -49,7 +49,8 @@ QUEUE_SQL = f"""
                AND s.starts_at > now() + ({LATEST_VISIT.format(EFFECTIVE_URGENCY)})
                AND NOT {OFFER_PENDING},
                false) AS needs_earlier_visit,
-           {OFFER_PENDING} AS offer_pending
+           {OFFER_PENDING} AS offer_pending,
+           a.status = 'booked' AND a.approved_at IS NULL AS awaiting_approval
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN providers p ON p.id = s.provider_id
@@ -88,6 +89,7 @@ def to_entry(row: dict[str, Any]) -> QueueEntry:
         urgency=row.get("urgency"),
         needs_earlier_visit=bool(row.get("needs_earlier_visit")),
         offer_pending=bool(row.get("offer_pending")),
+        awaiting_approval=bool(row.get("awaiting_approval")),
     )
 
 

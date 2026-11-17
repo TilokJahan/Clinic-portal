@@ -8,7 +8,9 @@ Every change to this file goes through a pull request that all three of us revie
 | POST | `/auth/dev-login` | appointment | none (dev only) | Demo token for a seed account | done |
 | GET | `/me` | appointment | any | The signed-in user | done |
 | GET | `/slots?date=YYYY-MM-DD&provider_id=` | appointment | any | List free slots | done |
-| POST | `/appointments` | appointment | patient | Book a slot | done |
+| POST | `/appointments` | appointment | patient | Request a slot, with symptoms (waits for approval) | done |
+| POST | `/appointments/{id}/approve` | appointment | clinician | Approve a booking request | done |
+| POST | `/appointments/{id}/decline` | appointment | clinician | Decline a request, with a note for the patient | done |
 | GET | `/appointments` | appointment | patient | My bookings | done |
 | GET | `/appointments/stream` | appointment | patient | Server-Sent Events: my bookings, live | done |
 | POST | `/intake` | appointment | patient | Submit symptoms (calls triage-service) | done |
@@ -20,7 +22,7 @@ Every change to this file goes through a pull request that all three of us revie
 | POST | `/lab/appointments/{id}/reports` | appointment | lab_tech / admin | Upload a lab report for any scheduled patient | done |
 | GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results (not lab techs) | done |
 | PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
-| GET | `/appointments/{id}/earlier-slots` | appointment | clinician | Free earlier slots with the same provider (max 10) | done |
+| GET | `/appointments/{id}/earlier-slots` | appointment | clinician | Free earlier slots with any provider (max 10) | done |
 | POST | `/appointments/{id}/reschedule-offers` | appointment | clinician | Offer the patient an earlier slot | done |
 | POST | `/reschedule-offers/{id}/accept` | appointment | patient (own) | Accept: move to the earlier slot | done |
 | POST | `/reschedule-offers/{id}/decline` | appointment | patient (own) | Decline: keep the booking | done |
@@ -170,25 +172,52 @@ counts as free.
 
 ### `POST /appointments` (patient)
 
-Body `{"slot_id": 1}`. The patient is the signed-in user (any `patient_id` in the body is
-ignored). Returns the `Appointment`.
+Body `{"slot_id": 1, "symptoms": "Sore throat for three days"}`. The patient is the signed-in
+user (any `patient_id` in the body is ignored). Returns the `Appointment`, with
+`"approved_at": null`.
+
+This is a **request**: the slot is held at once, and the visit waits for a clinician to approve
+it (`approved_at` is set) or decline it. `symptoms` (1–4000 characters) are sent to the triage
+service first, exactly like `POST /intake`, so the clinician sees the urgency with the request;
+the text is never stored. The web app always sends them. Without `symptoms` the request waits
+for `POST /intake`, and can't be approved until then.
 
 | Status | When | Body |
 |---|---|---|
-| 201 | Booked | `Appointment` |
+| 201 | Requested | `Appointment` |
 | 404 | Unknown slot | `{"detail": "Slot not found"}` |
 | 409 | Slot already booked, or already started | `{"detail": "Slot is already booked"}` / `{"detail": "Slot has already started"}` |
 | 422 | Invalid body | validation error |
 
 ### `GET /appointments` (patient)
 
-The signed-in patient's bookings that aren't cancelled, soonest first:
+The signed-in patient's bookings, soonest first. Cancelled ones are left out, except a request
+a clinician declined whose time hasn't come yet (so the patient sees why):
 
 ```json
 [{"id": 7, "slot_id": 1, "status": "booked", "created_at": "2030-01-06T15:02:11Z",
   "starts_at": "2030-01-07T09:00:00Z", "provider_name": "Dr. Alex Example",
-  "specialty": "General Practice", "intake_submitted": false, "pending_offer": null}]
+  "specialty": "General Practice", "intake_submitted": false, "approved": false,
+  "declined": false, "decline_reason": null, "pending_offer": null}]
 ```
+
+`approved` is `false` while the request waits for a clinician. A declined request has
+`"status": "cancelled"`, `"declined": true` and the clinician's note in `decline_reason` (or
+`null`).
+
+### `POST /appointments/{id}/approve` and `/decline` (clinician)
+
+A clinician decides a request from the queue, where it has `"awaiting_approval": true`.
+
+- **approve** sets `approved_at`. It needs the patient's symptoms first: 409 `"The patient hasn't
+  described their symptoms yet"`.
+- **decline** takes `{"reason": "..."}` (optional, at most 500 characters, shown to the patient).
+  The appointment is cancelled, so the slot opens again, and any offered time expires.
+- Both answer 404 for an unknown appointment, 409 `"Already approved"` or `"This request is no
+  longer open"`, and 403 for any role but clinician or admin.
+- Instead, the clinician can offer a different time (`POST /appointments/{id}/reschedule-offers`).
+  If the patient accepts it, the new visit is approved. A visit the patient moves themselves
+  (`POST /appointments/{id}/reschedule`) is a new request and needs approval again.
 
 `pending_offer` is `null`, or an earlier visit the care team has offered:
 `{"id": 4, "slot_id": 12, "starts_at": "2030-01-06T10:00:00Z", "provider_name": "Dr. Alex Example"}`.
@@ -257,8 +286,9 @@ records which clinician decided (`reviewed_by`).
 When a lab result makes a patient urgent but their visit is days away, a clinician can offer an
 earlier slot. Nothing moves until the patient accepts.
 
-**`GET /appointments/{id}/earlier-slots`** (clinician): free, upcoming slots with the same
-provider that start before this visit, earliest first, at most 10 (`Slot[]`). 404 for an unknown
+**`GET /appointments/{id}/earlier-slots`** (clinician): free, upcoming slots with any provider
+that start before this visit, earliest first (the patient's own provider first at the same time),
+at most 10 (`Slot[]`). Empty when the visit is already at the earliest free time. 404 for an unknown
 appointment, 409 if it isn't `booked`.
 
 **`POST /appointments/{id}/reschedule-offers`** (clinician), body

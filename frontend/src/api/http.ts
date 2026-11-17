@@ -72,7 +72,10 @@ export const httpApi: Api = {
     if (providerId) params.set('provider_id', String(providerId))
     return request(`/slots?${params}`)
   },
-  book: (slotId) => request('/appointments', json('POST', { slot_id: slotId })),
+  book: (slotId, symptoms) => request('/appointments', json('POST', { slot_id: slotId, symptoms })),
+  approve: (appointmentId) => request(`/appointments/${appointmentId}/approve`, { method: 'POST' }),
+  decline: (appointmentId, reason) =>
+    request(`/appointments/${appointmentId}/decline`, json('POST', { reason: reason || null })),
   myAppointments: () => request('/appointments'),
   submitIntake: (appointmentId, symptoms) =>
     request('/intake', json('POST', { appointment_id: appointmentId, symptoms })),

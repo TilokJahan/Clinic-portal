@@ -188,6 +188,14 @@ h1 .wave { margin-left: 4px; color: #d9a85f; font-size: 20px; }
 .hero-art { position: relative; width: clamp(330px, 34vw, 430px); height: 320px; display: grid; place-items: center; flex: 0 0 auto; }
 .patient-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 17px; }
 .patient-info { padding: 20px; }
+.booking-symptoms { display: grid; gap: 6px; margin: 4px 0 14px; }
+.booking-symptoms textarea { width: 100%; padding: 11px 12px; color: #48584f; background: #fff; border: 1px solid #dce7ee; border-radius: 8px; outline: none; font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; }
+.booking-symptoms textarea:focus { border-color: #65b3aa; box-shadow: 0 0 0 3px #e2f2ef; }
+.request-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.request-actions textarea { flex-basis: 100%; width: 100%; padding: 9px 11px; border: 1px solid #dce7ee; border-radius: 8px; font: inherit; font-size: 13px; resize: vertical; }
+.approval-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #fff4dc; color: #8a5a00; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.request-status { font-weight: 600; }
+.declined-card { border-left: 4px solid #c9573d; }
 .past-visits { padding: 20px; margin-top: 15px; }
 .past-visits h3 { margin: 0 0 10px; }
 .past-visits ul { list-style: none; margin: 0; padding: 0; }

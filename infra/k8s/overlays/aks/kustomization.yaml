@@ -35,6 +35,7 @@ configMapGenerator:
       - 02-schemav4_lab_uploaded_by.sql=../../../../services/appointment-service/db/schemav4_lab_uploaded_by.sql
       - 02-schemav5_reschedule.sql=../../../../services/appointment-service/db/schemav5_reschedule.sql
       - 02-schemav6_urgent_reserve.sql=../../../../services/appointment-service/db/schemav6_urgent_reserve.sql
+      - 02-schemav7_approval.sql=../../../../services/appointment-service/db/schemav7_approval.sql
       - 03-seed.sql=../../../../services/appointment-service/db/seed.sql
 patches:
   - path: patches/workload-identity.yaml

@@ -145,13 +145,14 @@ def test_an_offer_whose_slot_was_taken_no_longer_counts_as_open(client, world):
 # --- earlier slots ----------------------------------------------------------------------------
 
 
-def test_earlier_slots_are_free_upcoming_and_with_the_same_provider(client, world):
+def test_earlier_slots_are_free_upcoming_and_with_any_provider(client, world):
     response = client.get(f"/appointments/{OLD}/earlier-slots", headers=CLINICIAN)
     assert response.status_code == 200
     slots = response.json()
-    # Not the past slot, Dr. Two's, the later one, or the booked ones
-    assert [s["id"] for s in slots] == [E1, E2, E3]
-    assert {s["provider_name"] for s in slots} == {"Dr. One"}
+    # Soonest first, Dr. Two's included (slot 7, in 3 hours); not the past slot, the later
+    # one, or the booked ones
+    assert [s["id"] for s in slots] == [E1, 7, E2, E3]
+    assert [s["provider_name"] for s in slots] == ["Dr. One", "Dr. Two", "Dr. One", "Dr. One"]
     assert slots[0]["specialty"] == "General Practice"
 
 
@@ -161,7 +162,7 @@ def test_booked_slots_are_left_out_but_cancelled_ones_are_not(client, world):
         "INSERT INTO appointments (patient_id, slot_id, status) VALUES (2, %s, 'cancelled')", (E3,)
     )
     slots = client.get(f"/appointments/{OLD}/earlier-slots", headers=CLINICIAN).json()
-    assert [s["id"] for s in slots] == [E1, E3]
+    assert [s["id"] for s in slots] == [E1, 7, E3]  # 7: Dr. Two's free slot
 
 
 def test_earlier_slots_are_limited_to_ten_earliest_first(client, world):

@@ -9,7 +9,8 @@ import { useQueue } from '../useQueue'
 import { ClinicianLabSection, LabReasonChip } from '../LabPanels'
 import { ClinicianOfferSection } from '../Scheduling'
 
-const FILTERS = ['all', 'urgent', 'soon', 'routine'] as const
+const FILTERS = ['all', 'requests', 'urgent', 'soon', 'routine'] as const
+const FILTER_LABEL: Record<(typeof FILTERS)[number], string> = { all: 'All', requests: 'Awaiting approval', urgent: 'Urgent', soon: 'Soon', routine: 'Routine' }
 
 export function LiveBadge({ status }: { status: StreamStatus }) {
   const text = { connecting: 'Connecting…', live: 'Live', reconnecting: 'Reconnecting…' }[status]
@@ -19,7 +20,7 @@ export function LiveBadge({ status }: { status: StreamStatus }) {
 export function QueueRow({ entry, compact = false, selected = false, onSelect }: { entry: QueueEntry; compact?: boolean; selected?: boolean; onSelect?: () => void }) {
   const t = entry.triage
   const cells = <>
-    <div className="patient-cell"><div className={`patient-avatar avatar-${entry.appointment_id % 4}`}>{initials(entry.patient_label)}</div><div><b>{entry.patient_label}</b><span>{formatTime(entry.starts_at)} · {entry.provider_name}</span></div></div>
+    <div className="patient-cell"><div className={`patient-avatar avatar-${entry.appointment_id % 4}`}>{initials(entry.patient_label)}</div><div><b>{entry.patient_label}</b>{entry.awaiting_approval && <> <span className="approval-badge">awaiting approval</span></>}<span>{formatTime(entry.starts_at)} · {entry.provider_name}</span></div></div>
     <div className="reason-cell"><span>{t ? t.summary : entry.lab ? 'Lab report received' : 'Waiting for the patient’s intake'}</span>{t && t.red_flags.length > 0 && <small>{t.red_flags.length} red flag{t.red_flags.length > 1 ? 's' : ''}</small>}<LabReasonChip reason={entry.lab?.reason ?? null} urgency={entry.lab?.urgency ?? null} /></div>
     <div className="wait-cell">{formatWait(waitMinutes(entry))}</div>
     <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && entry.needs_earlier_visit && <small className="review-tag earlier">needs earlier visit</small>}{!compact && entry.offer_pending && <small className="review-tag">offer sent</small>}{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
@@ -61,8 +62,10 @@ export function QueuePage() {
   const selected = items.find((e) => e.appointment_id === selectedId) ?? null
   const selectedMessages = selected ? messagesForPatientLabel(patientMessages, selected.patient_label) : []
   const q = query.toLowerCase()
+  const matches = (e: QueueEntry, f: (typeof FILTERS)[number]) =>
+    f === 'all' || (f === 'requests' ? Boolean(e.awaiting_approval) : e.urgency === f)
   const visible = items.filter((e) =>
-    (filter === 'all' || e.urgency === filter) &&
+    matches(e, filter) &&
     `${e.patient_label} ${e.provider_name} ${e.triage?.summary ?? ''} ${e.triage?.red_flags.join(' ') ?? ''} ${e.lab?.reason ?? ''}`.toLowerCase().includes(q))
 
   async function review(urgency: Urgency) {
@@ -83,7 +86,7 @@ export function QueuePage() {
     <div className="queue-toolbar">
       <div className="search-box"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search patients, providers or symptoms" aria-label="Search queue" /></div>
       <div className="filter-tabs">{FILTERS.map((f) =>
-        <button className={filter === f ? 'active' : ''} key={f} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : f[0].toUpperCase() + f.slice(1)}<span>{f === 'all' ? items.length : items.filter((e) => e.urgency === f).length}</span></button>)}
+        <button className={filter === f ? 'active' : ''} key={f} onClick={() => setFilter(f)}>{FILTER_LABEL[f]}<span>{items.filter((e) => matches(e, f)).length}</span></button>)}
       </div>
     </div>
     <div className="panel full-queue">
@@ -117,6 +120,7 @@ export function QueuePage() {
             {error && <ErrorBanner>{error}</ErrorBanner>}
           </div>
         </>}
+      <ApprovalSection entry={selected} />
       <ClinicianOfferSection entry={selected} />
       <ClinicianLabSection appointmentId={selected.appointment_id} refreshKey={JSON.stringify(selected.lab)} />
       <div className="drawer-section queue-patient-messages">
@@ -136,4 +140,51 @@ export function QueuePage() {
       <div className="drawer-safety"><ShieldCheck size={16} /> AI suggestions support clinical judgment and are not a diagnosis. Critical lab values come from fixed rules, not the AI.</div>
     </aside></div>}
   </>
+}
+
+/** A booking request: approve it, or decline it with a note the patient sees. Offering a
+ *  different time is the section below; the patient accepting it counts as approved. */
+function ApprovalSection({ entry }: { entry: QueueEntry }) {
+  const [busy, setBusy] = useState<'approve' | 'decline' | null>(null)
+  const [declining, setDeclining] = useState(false)
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => { setDeclining(false); setReason(''); setError('') }, [entry.appointment_id])
+  if (!entry.awaiting_approval) return null
+
+  async function act(kind: 'approve' | 'decline') {
+    setBusy(kind)
+    setError('')
+    const r = kind === 'approve' ? await api.approve(entry.appointment_id) : await api.decline(entry.appointment_id, reason)
+    setBusy(null)
+    // On success the live queue sends the change; the drawer updates or the request leaves it
+    if (!r.ok) setError(r.detail)
+  }
+
+  const limit = entry.urgency === 'urgent' ? 'within 24 hours' : entry.urgency === 'soon' ? 'within 3 days' : null
+  return <div className="drawer-section approval-section">
+    <span className="drawer-label">BOOKING REQUEST</span>
+    <p>Requested for <b>{formatDateTime(entry.starts_at)}</b> with {entry.provider_name}. The time is held until you decide.</p>
+    {!entry.triage
+      ? <p className="field-hint">Waiting for the patient’s symptoms. You can approve once they arrive.</p>
+      : entry.needs_earlier_visit
+        ? <p className="field-hint">The priority is <b>{entry.urgency}</b>, so they should be seen {limit}. This time is later than that: offer an earlier time below, or approve it if this time is right.</p>
+        : <p className="field-hint">Priority <b>{entry.urgency}</b>{limit ? ` (to be seen ${limit})` : ''}. The requested time fits.</p>}
+    <div className="request-actions">
+      <button type="button" className="button button-primary" disabled={!entry.triage || busy !== null} onClick={() => act('approve')}>
+        {busy === 'approve' ? <Loader2 className="spin" size={16} /> : <Check size={16} />}Approve
+      </button>
+      {!declining
+        ? <button type="button" className="button button-secondary" disabled={busy !== null} onClick={() => setDeclining(true)}>Decline…</button>
+        : <>
+          <textarea aria-label="Note to the patient" value={reason} maxLength={500} rows={2} onChange={(e) => setReason(e.target.value)}
+            placeholder="Optional note the patient will see, e.g. please book with a specialist." />
+          <button type="button" className="button button-secondary" disabled={busy !== null} onClick={() => act('decline')}>
+            {busy === 'decline' ? <Loader2 className="spin" size={16} /> : null}Decline request
+          </button>
+          <button type="button" className="text-button" disabled={busy !== null} onClick={() => setDeclining(false)}>Cancel</button>
+        </>}
+    </div>
+    {error && <ErrorBanner>{error}</ErrorBanner>}
+  </div>
 }

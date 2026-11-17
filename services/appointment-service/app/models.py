@@ -25,6 +25,9 @@ class Slot(BaseModel):
 class AppointmentCreate(BaseModel):
     # The patient comes from the sign-in token, never from the body.
     slot_id: int = Field(gt=0)
+    # What brings the patient in. Sent to the triage service with the request, so the clinician
+    # can approve it; never stored. Without it the request waits until POST /intake.
+    symptoms: str | None = Field(default=None, min_length=1, max_length=4000)
 
 
 class Appointment(BaseModel):
@@ -33,6 +36,8 @@ class Appointment(BaseModel):
     slot_id: int
     status: AppointmentStatus
     created_at: datetime
+    # None while the request waits for a clinician's approval
+    approved_at: datetime | None = None
 
 
 class Urgency(StrEnum):
@@ -101,6 +106,8 @@ class QueueEntry(BaseModel):
     needs_earlier_visit: bool = False
     # An earlier visit has been offered and the patient hasn't answered yet
     offer_pending: bool = False
+    # A booking request no clinician has approved yet
+    awaiting_approval: bool = False
 
 
 class QueueLab(BaseModel):
@@ -149,6 +156,11 @@ class MyAppointment(BaseModel):
     provider_name: str
     specialty: str
     intake_submitted: bool
+    # False while a clinician hasn't approved the request yet
+    approved: bool = True
+    # The care team declined the request (status is then "cancelled"); the reason, if they gave one
+    declined: bool = False
+    decline_reason: str | None = None
     # An earlier slot the patient can accept or decline; None if there is no open offer
     pending_offer: PendingOffer | None = None
 
@@ -170,6 +182,11 @@ class RescheduleOffer(BaseModel):
     status: str
     reason: str | None
     created_at: datetime
+
+
+class DeclineRequest(BaseModel):
+    # Shown to the patient
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class OfferResult(BaseModel):

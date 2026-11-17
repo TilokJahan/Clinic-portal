@@ -8,6 +8,7 @@ import { CLINIC_PHONE, SlotChoices, TimeframeChips } from '../Scheduling'
 import type { Appointment, Slot, Timeframe } from '../types'
 
 type Mode = 'timeframe' | 'day'
+const MAX_SYMPTOMS = 4000
 
 export function BookingPage() {
   const [mode, setMode] = useState<Mode>('timeframe')
@@ -22,6 +23,7 @@ export function BookingPage() {
   const [booking, setBooking] = useState(false)
   const [error, setError] = useState('')
   const [booked, setBooked] = useState<{ appointment: Appointment; slot: Slot } | null>(null)
+  const [symptoms, setSymptoms] = useState('')
 
   useEffect(() => { api.urgencyMatrix().then((r) => { if (r.ok) setTimeframes(r.data.timeframes) }) }, [])
 
@@ -53,12 +55,14 @@ export function BookingPage() {
 
   async function book() {
     if (!chosen) return
+    if (!symptoms.trim()) { setError('Please describe your symptoms. Your care team needs them to approve the visit.'); return }
     setBooking(true)
     setError('')
-    const result = await api.book(chosen.id)
+    const result = await api.book(chosen.id, symptoms.trim())
     setBooking(false)
     if (result.ok) {
       setBooked({ appointment: result.data, slot: chosen })
+      setSymptoms('')
     } else if (result.status === 409) {
       // Someone else got there first (or the time has passed): show it and refresh the list
       setError(result.detail === 'Slot has already started'
@@ -73,11 +77,13 @@ export function BookingPage() {
 
   if (booked) return <><Header />
     <div className="panel form-panel success-panel"><div className="success-mark"><Check /></div>
-      <h2>You’re on the calendar</h2>
-      <p>{booked.slot.provider_name}, {formatDateTime(booked.slot.starts_at)}. Appointment #{booked.appointment.id}.</p>
+      <h2>Request sent</h2>
+      <p>{booked.slot.provider_name}, {formatDateTime(booked.slot.starts_at)}. We’re holding this time for you.</p>
+      <p>A clinician will review your symptoms and how urgent they are, then confirm the visit or offer a better time. You’ll see the answer on your home page.</p>
+      <p className="field-hint">If you think this may be an emergency, call your local emergency number now.</p>
       <div className="hero-actions centered">
-        <NavLink className="button button-primary" to={`/intake?appointment=${booked.appointment.id}`}>Describe your symptoms <ArrowRight size={16} /></NavLink>
-        <button className="button button-secondary" onClick={() => { setBooked(null); setChosen(null); load() }}>Book another visit</button>
+        <NavLink className="button button-primary" to="/">Go to home <ArrowRight size={16} /></NavLink>
+        <button className="button button-secondary" onClick={() => { setBooked(null); setChosen(null); load() }}>Request another visit</button>
       </div>
     </div></>
 
@@ -129,14 +135,21 @@ export function BookingPage() {
                   <b>{formatTime(slot.starts_at)}</b><small>{slot.provider_name}</small>
                 </button>)}
               </div>}
+      <div className="form-step"><span>03</span><div><h2>Describe your symptoms</h2><p>A clinician reviews them, and how urgent they are, before confirming your visit.</p></div></div>
+      <label className="booking-symptoms">
+        <textarea aria-label="Describe your symptoms" value={symptoms} onChange={(e) => setSymptoms(e.target.value)} maxLength={MAX_SYMPTOMS} rows={5} required
+          placeholder="When did it start? What does it feel like? Is it getting better or worse?" />
+        <span className="field-hint">Please don’t include your name, phone number or other personal details. {symptoms.length}/{MAX_SYMPTOMS}</span>
+      </label>
+      <div className="intake-disclaimer"><ShieldCheck size={17} /><p><b>This is not a diagnosis.</b> An AI suggests a priority and a clinician reviews it and makes all care decisions. If you may be experiencing an emergency, call your local emergency number.</p></div>
       <div className="form-footer"><span><ShieldCheck size={15} /> Your information is kept private.</span>
-        <button disabled={!chosen || booking} className="button button-primary" onClick={book}>
-          {booking ? <><Loader2 className="spin" size={16} /> Booking…</> : <>{mode === 'timeframe' ? 'Accept this schedule' : 'Book this time'} <ArrowRight size={16} /></>}
+        <button disabled={!chosen || !symptoms.trim() || booking} className="button button-primary" onClick={book}>
+          {booking ? <><Loader2 className="spin" size={16} /> Sending…</> : <>Request this time <ArrowRight size={16} /></>}
         </button>
       </div>
     </div></>
 }
 
 function Header() {
-  return <div className="welcome-row"><div><h1>Book an appointment</h1><p>Choose a time for your next visit.</p></div></div>
+  return <div className="welcome-row"><div><h1>Book an appointment</h1><p>Choose a time and tell us what’s going on. A clinician confirms your visit.</p></div></div>
 }

@@ -7,6 +7,8 @@ and [`schemav4_lab_uploaded_by.sql`](../services/appointment-service/db/schemav4
 and [`schemav5_reschedule.sql`](../services/appointment-service/db/schemav5_reschedule.sql) (earlier-visit offers)
 and [`schemav6_urgent_reserve.sql`](../services/appointment-service/db/schemav6_urgent_reserve.sql) (the urgent
 reserve; it also adds slots so two weeks are always open, on every deploy).
+and [`schemav7_approval.sql`](../services/appointment-service/db/schemav7_approval.sql) (clinician approval of
+booking requests: `appointments.approved_at`, `approved_by`, `declined_at`, `decline_reason`).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid
