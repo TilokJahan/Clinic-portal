@@ -111,7 +111,7 @@ def test_second_intake_for_the_same_appointment_returns_409(client, booked, tria
 
 
 def test_intake_for_unknown_or_cancelled_appointment(client, db, booked, triage):
-    assert _intake(client, 999, "cough").status_code == 404
+    assert _intake(client, 999, "cough", patient=1).status_code == 404
     db.execute("UPDATE appointments SET status = 'cancelled' WHERE id = 2")
     response = _intake(client, 2, "cough")
     assert response.status_code == 409
@@ -316,6 +316,7 @@ def test_patient_stream_needs_a_patient(client, db, booked, monkeypatch):
     from app import db as app_db
 
     # The stream looks the user up on its own short connection; point it at the test schema
+    db.row_factory = dict_row
     monkeypatch.setattr(app_db, "connection", lambda: nullcontext(db))
     assert client.get("/appointments/stream").status_code == 401
     assert client.get("/appointments/stream", headers=CLINICIAN).status_code == 403

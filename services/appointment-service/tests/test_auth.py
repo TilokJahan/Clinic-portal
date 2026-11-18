@@ -110,16 +110,25 @@ def test_lab_tech_can_sign_in_with_dev_login(client, lab_tech):
 # --- the LabTech dependency (used by the lab endpoints that come next) -----------------------
 
 
-def _lab_only_client() -> TestClient:
-    """A tiny app with one lab-tech-only route. Dev tokens are checked without the database."""
+def _lab_only_client(role: str = "patient") -> TestClient:
+    """A tiny app with one lab-tech-only route. The user lookup answers from a stand-in for the
+    database: user 9 with the given role."""
     app = FastAPI()
 
     @app.get("/lab-only")
     def lab_only(user: auth.LabTech):
         return {"role": user.role}
 
+    class Row:
+        def fetchone(self):
+            return {"id": 9, "email": f"{role}@example.com", "role": role, "active": True}
+
+    class FakeConnection:
+        def execute(self, *args):
+            return Row()
+
     def no_database():
-        yield None
+        yield FakeConnection()
 
     app.dependency_overrides[auth.db.get_conn] = no_database
     return TestClient(app)
@@ -131,7 +140,7 @@ def _lab_only_client() -> TestClient:
 )
 def test_lab_tech_routes_allow_lab_techs_and_admins_only(role, expected):
     headers = as_user(9, role=role, email=f"{role}@example.com")
-    assert _lab_only_client().get("/lab-only", headers=headers).status_code == expected
+    assert _lab_only_client(role).get("/lab-only", headers=headers).status_code == expected
 
 
 def test_lab_tech_routes_need_a_token():

@@ -212,15 +212,21 @@ export function ClinicianOfferSection({ entry }: { entry: QueueEntry }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [sent, setSent] = useState(0)
-  useEffect(() => { setSlots(null); setChosen([]); setError(''); setSent(0) }, [entry.appointment_id])
+  const [day, setDay] = useState('')
+  useEffect(() => { setSlots(null); setChosen([]); setError(''); setSent(0); setDay('') }, [entry.appointment_id])
   // A new answer from the patient (declined) reopens the section
   useEffect(() => { if (entry.offer_declined_note != null) setSent(0) }, [entry.offer_declined_note])
   if (entry.status !== 'booked') return null
 
+  // How far out the priority allows (urgent 24 h, soon 3 days, routine and unset 2 weeks)
+  const limitDays = entry.urgency === 'urgent' ? 1 : entry.urgency === 'soon' ? 3 : 14
+  const dayOf = (iso: string) => new Date(iso).toLocaleDateString('en-CA')
+
   async function find() {
     setError('')
-    const r = await api.alternativeSlots(entry.appointment_id)
-    if (r.ok) { setSlots(r.data); setChosen(r.data[0] ? [r.data[0].id] : []) } else setError(r.detail)
+    // Every proposable time in the window, shown as a calendar of days
+    const r = await api.alternativeSlots(entry.appointment_id, { all: true })
+    if (r.ok) { setSlots(r.data); setDay(r.data[0] ? dayOf(r.data[0].starts_at) : '') } else setError(r.detail)
   }
   async function propose() {
     if (!chosen.length) return
@@ -230,6 +236,22 @@ export function ClinicianOfferSection({ entry }: { entry: QueueEntry }) {
     setBusy(false)
     if (r.ok) { setSent(r.data.length); setSlots(null); setChosen([]) } else setError(r.detail)
   }
+
+  // Every weekday from today to the end of the window, with its free times (none: shown full)
+  const days: { day: string; slots: Slot[] }[] = []
+  if (slots) {
+    const windowEnd = Date.now() + limitDays * 86_400_000
+    const last = slots.length ? Math.max(windowEnd, Date.parse(slots[slots.length - 1].starts_at)) : windowEnd
+    for (let t = Date.now(); t <= last; t += 86_400_000) {
+      const d = new Date(t)
+      if (d.getDay() === 0 || d.getDay() === 6) continue
+      const key = d.toLocaleDateString('en-CA')
+      days.push({ day: key, slots: slots.filter((x) => dayOf(x.starts_at) === key) })
+    }
+  }
+  const shown = days.find((d) => d.day === day)?.slots ?? []
+  const chosenSlots = slots?.filter((x) => chosen.includes(x.id)) ?? []
+  const limitText = limitDays === 1 ? '24 hours' : `${limitDays} days`
 
   const waiting = sent > 0 || entry.offer_pending
   return <div className="drawer-section">
@@ -241,12 +263,23 @@ export function ClinicianOfferSection({ entry }: { entry: QueueEntry }) {
       : <>
         <p>{entry.needs_earlier_visit
           ? `The visit is later than a ${entry.urgency} priority allows (${entry.urgency === 'urgent' ? 'within 24 hours' : 'within 3 days'}). Propose earlier times or call the patient.`
-          : 'Propose up to three times, with any doctor, that fit the priority. The patient chooses one, or tells you why none work.'}</p>
+          : `Propose up to three times, with any doctor, within ${limitText} (the limit for this priority). The patient chooses one, or tells you why none work.`}</p>
         {slots === null
           ? <button type="button" className="button button-secondary" onClick={find}>Find times</button>
           : slots.length === 0
             ? <p className="field-hint">No other free time fits this priority, with any doctor, including the urgent reserve.{entry.needs_earlier_visit ? ' Call the patient to arrange care sooner.' : ''}</p>
-            : <><SlotMultiChoices slots={slots} chosen={chosen} max={3} onChange={setChosen} />
+            : <>
+              <div className="propose-calendar" role="tablist" aria-label="Days">{days.map((d) => {
+                const picked = chosenSlots.filter((x) => dayOf(x.starts_at) === d.day).length
+                return <button type="button" role="tab" key={d.day} aria-selected={d.day === day} disabled={!d.slots.length}
+                  className={`calendar-day ${d.day === day ? 'chosen' : ''}`} onClick={() => setDay(d.day)}>
+                  <b>{formatDay(`${d.day}T12:00:00`)}</b>
+                  <small>{d.slots.length ? `${d.slots.length} free` : 'Full'}</small>
+                  {picked > 0 && <em>{picked} picked</em>}
+                </button>
+              })}</div>
+              {shown.length > 0 && <SlotMultiChoices slots={shown} chosen={chosen} max={3} onChange={setChosen} />}
+              {chosenSlots.length > 0 && <p className="field-hint">Chosen: {chosenSlots.map((x) => `${formatDay(x.starts_at)} ${formatTime(x.starts_at)} (${x.provider_name})`).join(' · ')}</p>}
               <button type="button" className="button button-primary" disabled={!chosen.length || busy} onClick={propose}>
                 {busy ? <Loader2 className="spin" size={16} /> : null}Propose {chosen.length || ''} time{chosen.length === 1 ? '' : 's'}
               </button></>}

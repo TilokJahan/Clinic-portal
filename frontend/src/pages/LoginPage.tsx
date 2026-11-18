@@ -31,12 +31,15 @@ export function LoginPage({ onLogin }: { onLogin: (session: Session) => void }) 
   </div></div>
 }
 
+const OTHER = '__other__'
+
 function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string, passcode: string) => void }) {
   const [role, setRole] = useState<Role>('patient')
   const accounts = DEMO_ACCOUNTS.filter((a) => a.role === role)
   const [email, setEmail] = useState(accounts[0].email)
   const [passcode, setPasscode] = useState('')
-  const choose = (next: Role) => { setRole(next); setEmail(DEMO_ACCOUNTS.find((a) => a.role === next)!.email) }
+  const [other, setOther] = useState(false)
+  const choose = (next: Role) => { setRole(next); setOther(false); setEmail(DEMO_ACCOUNTS.find((a) => a.role === next)!.email) }
   return <form onSubmit={(e) => { e.preventDefault(); onSubmit(email, passcode) }}>
     <p>Choose a demo account to continue.</p>
     <div className="login-role"><span>Continue as</span><div>
@@ -44,10 +47,14 @@ function DemoForm({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string,
         <button type="button" key={r} className={role === r ? 'selected' : ''} onClick={() => choose(r)}>{label}</button>)}
     </div></div>
     <label>Demo account
-      <select value={email} onChange={(e) => setEmail(e.target.value)}>
+      <select value={other ? OTHER : email} onChange={(e) => { const v = e.target.value; setOther(v === OTHER); if (v !== OTHER) setEmail(v); else setEmail('') }}>
         {accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
+        <option value={OTHER}>Another account (invited)…</option>
       </select>
     </label>
+    {other && <label>Your email
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="The email you were invited with" required />
+    </label>}
     {authMode === 'dev' && <label>Demo passcode
       <input type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} autoComplete="off" placeholder="Ask the team for the passcode" />
     </label>}

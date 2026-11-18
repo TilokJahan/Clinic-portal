@@ -14,7 +14,9 @@ and [`schemav8_booking_flow.sql`](../services/appointment-service/db/schemav8_bo
 proposed times per appointment, and `reschedule_offers.patient_note`)
 and [`schemav9_roles_labs.sql`](../services/appointment-service/db/schemav9_roles_labs.sql) (the physician role and
 `users.provider_id`, `triage_results.suggested_tests`, `lab_reports.exam_type` and `taken_on`, the `lab_requests`
-table, and `appointments.visit_summary`, `completed_at`, `completed_by`).
+table, and `appointments.visit_summary`, `completed_at`, `completed_by`)
+and [`schemav9z_lab_visits.sql`](../services/appointment-service/db/schemav9z_lab_visits.sql) (schema v10: lab visit
+times on `lab_requests`, one patient per lab time; `users.active`; the `invitations` table).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid

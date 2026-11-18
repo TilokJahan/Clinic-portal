@@ -34,6 +34,9 @@ REVIEWS = Counter("triage_reviews_total", "Clinician decisions", ["outcome"])  #
 RESCHEDULE_OFFERS = Counter(
     "reschedule_offers_total", "Earlier-visit offers, by outcome", ["outcome"]
 )  # offered / accepted / declined / expired
+LAB_VISITS = Counter(
+    "lab_visits_total", "Lab visit times proposed and booked", ["event"]
+)  # proposed / proposed_time / own_time
 LAB_REQUESTS = Counter(
     "lab_requests_total", "Tests clinical staff asked the lab for, by urgency", ["urgency"]
 )
@@ -75,6 +78,8 @@ for _outcome in ("offered", "accepted", "declined", "expired"):
     RESCHEDULE_OFFERS.labels(_outcome)
 for _urgency in ("routine", "soon", "urgent"):
     LAB_REQUESTS.labels(_urgency)
+for _event in ("proposed", "proposed_time", "own_time"):
+    LAB_VISITS.labels(_event)
 for _decision in ("approved", "declined"):
     APPROVALS.labels(_decision)
 

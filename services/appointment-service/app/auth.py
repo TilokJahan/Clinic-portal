@@ -122,14 +122,31 @@ def _user_from_claims(conn: psycopg.Connection, claims: dict) -> CurrentUser:
         """,
         {"email": email, "role": configured or "patient", "configured": configured},
     ).fetchone()
-    return CurrentUser(**row)
+    # An admin's invitation for this email sets the role at the first sign-in (app/admin.py)
+    from app.admin import apply_invitation
+
+    apply_invitation(conn, row["id"], email)
+    return _current(conn, row["id"])
+
+
+def _current(conn: psycopg.Connection, user_id: int) -> CurrentUser:
+    """The user as the database has them now: a role an admin changed applies at once, and a
+    disabled account can't use a token it already has."""
+    row = conn.execute(
+        "SELECT id, email, role, active FROM users WHERE id = %s", (user_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+    if not row["active"]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This account is disabled")
+    return CurrentUser(id=row["id"], email=row["email"], role=row["role"])
 
 
 def decode(token: str, conn: psycopg.Connection) -> CurrentUser:
     try:
         if auth_mode() == "dev":
             claims = jwt.decode(token, _dev_secret(), algorithms=["HS256"])
-            return CurrentUser(id=int(claims["sub"]), email=claims["email"], role=claims["role"])
+            return _current(conn, int(claims["sub"]))
         if auth_mode() == "entra-external-id":
             return _user_from_claims(conn, _verify_entra(token))
     except (jwt.PyJWTError, KeyError, ValueError) as exc:

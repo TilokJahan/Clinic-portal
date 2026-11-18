@@ -11,7 +11,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import admin, approval, db, labs, metrics, physician, reschedule, scheduling, urgency
+from app import (
+    admin,
+    approval,
+    db,
+    lab_visits,
+    labs,
+    metrics,
+    physician,
+    reschedule,
+    scheduling,
+    urgency,
+)
 from app.auth import (
     AnyUser,
     Clinician,
@@ -58,6 +69,7 @@ app.include_router(admin.router)
 app.include_router(approval.router)
 app.include_router(physician.router)
 app.include_router(labs.router)
+app.include_router(lab_visits.router)
 app.include_router(reschedule.router)
 app.include_router(scheduling.router)
 
@@ -102,10 +114,13 @@ def dev_login(conn: Conn, body: DevLogin) -> TokenResponse:
     if expected and not secrets.compare_digest(body.passcode.encode(), expected.encode()):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong or missing demo passcode")
     row = conn.execute(
-        "SELECT id, email, role FROM users WHERE email = %s", (body.email.strip().lower(),)
+        "SELECT id, email, role, active FROM users WHERE email = %s",
+        (body.email.strip().lower(),),
     ).fetchone()
     if row is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown demo account")
+    if not row.pop("active"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This account is disabled")
     user = CurrentUser(**row)
     return TokenResponse(access_token=issue_dev_token(user), user=UserOut(**row))
 

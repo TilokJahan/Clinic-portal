@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Ambulance, ArrowDown, ArrowRight, Baby, Bean, Bone, Brain, CalendarDays, CalendarCheck, Ear, Heart, HeartPulse, MapPin, MessageCircle, Phone, ReceiptText, Ribbon, Salad, ScanFace, Save, ShieldCheck, Stethoscope, TestTube2 } from 'lucide-react'
 import { dayIsOver, formatDateTime } from '../format'
-import { EXAM_LABELS } from '../labTypes'
+import { LabVisitCard, openLabRequests } from '../LabVisits'
 import { addPatientMessage, loadPatientMessages, type PatientMessage } from '../patientMessages'
 import { api } from '../api'
 import { PatientLabCard } from '../LabPanels'
@@ -111,6 +111,7 @@ export function PatientHome({ patientId }: { patientId: number }) {
         <NavLink className="button button-primary" to="/book">Request another time <ArrowRight size={16} /></NavLink>
       </div>
     </section>)}
+    {upcoming.flatMap((a) => openLabRequests(a.lab_requests)).map((q) => <LabVisitCard key={`lab${q.id}`} request={q} />)}
     {upcoming.filter((a) => a.pending_offers?.length || a.pending_offer).map((a) => <OfferCard key={a.id} appointment={a} onAnswered={() => setReload((n) => n + 1)} />)}
     <section className="patient-info-grid">
       <div className="panel patient-info"><div className="info-icon mint"><CalendarDays /></div><h3>Your next step</h3>
@@ -119,8 +120,6 @@ export function PatientHome({ patientId }: { patientId: number }) {
               <p>{next.approved === false ? 'Requested visit' : 'Next visit'}: {next.provider_name}, {formatDateTime(next.starts_at)}.{next.approved === false
                 ? ' A clinician is reviewing your symptoms and will confirm this time or offer a better one.'
                 : next.intake_submitted ? ' Your care team has your symptoms.' : ''}</p>
-              {next.lab_requests?.filter((q) => q.status === 'requested' || q.status === 'scheduled').map((q) =>
-                <p key={q.id} className="lab-request-note">Your care team asked for a <b>{EXAM_LABELS[q.exam_type].toLowerCase()}</b> ({q.urgency}). {q.status === 'scheduled' ? 'The lab has scheduled it.' : 'The lab will contact you, or attach a recent result below.'}</p>)}
               {!next.intake_submitted && <NavLink to={`/intake?appointment=${next.id}`}>Describe your symptoms <ArrowRight size={15} /></NavLink>}
               <NavLink to={`/schedule?appointment=${next.id}`}>Change the time <ArrowRight size={15} /></NavLink></>
           : today

@@ -30,6 +30,7 @@ configMapGenerator:
       - 02-schemav7_approval.sql=../../../../services/appointment-service/db/schemav7_approval.sql
       - 02-schemav8_booking_flow.sql=../../../../services/appointment-service/db/schemav8_booking_flow.sql
       - 02-schemav9_roles_labs.sql=../../../../services/appointment-service/db/schemav9_roles_labs.sql
+      - 02-schemav9z_lab_visits.sql=../../../../services/appointment-service/db/schemav9z_lab_visits.sql
       - 03-seed.sql=../../../../services/appointment-service/db/seed.sql
 secretGenerator:
   # Local-only throwaway values. Real secrets come from Azure Key Vault (see overlays/aks).

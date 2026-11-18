@@ -517,3 +517,43 @@ def test_the_migration_can_run_twice(world):
         "AND tgname = 'reschedule_offers_queue_changed'"
     ).fetchone()[0]
     assert triggers == 1
+
+
+def test_a_clinician_can_propose_a_later_day_for_a_routine_visit(client, world):
+    """Without a date only the earliest times come back (often all tomorrow); a date lists that
+    day. The AI said soon, the clinician overrode it to routine: two weeks, so ten days out is
+    fine. Back to urgent, that day is too late."""
+    world.execute(
+        "INSERT INTO triage_results (appointment_id, patient_id, ai_urgency, final_urgency, "
+        "summary) VALUES (%s, 1, 'soon', 'routine', 'Mild rash.')",
+        (OLD,),
+    )
+    later_day = world.execute(
+        "SELECT (starts_at AT TIME ZONE 'America/New_York')::date FROM slots WHERE id = %s",
+        (LATER,),
+    ).fetchone()[0]
+
+    def on_day():
+        response = client.get(
+            f"/appointments/{OLD}/alternative-slots",
+            params={"date": str(later_day)},
+            headers=CLINICIAN,
+        )
+        assert response.status_code == 200
+        return [s["id"] for s in response.json()]
+
+    assert on_day() == [LATER]
+    assert _offer(client, slot=LATER).status_code == 201
+    world.execute(
+        "UPDATE triage_results SET final_urgency = 'urgent' WHERE appointment_id = %s", (OLD,)
+    )
+    assert on_day() == []
+
+
+def test_all_proposable_times_come_back_for_the_calendar(client, world):
+    response = client.get(
+        f"/appointments/{OLD}/alternative-slots", params={"all": "true"}, headers=CLINICIAN
+    )
+    ids = [s["id"] for s in response.json()]
+    # Every free, upcoming time with any doctor in the two-week window, soonest first
+    assert ids == [E1, OTHER_PROVIDER, E2, E3, LATER]

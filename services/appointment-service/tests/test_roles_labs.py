@@ -118,7 +118,9 @@ def test_lab_requests_reach_the_lab_most_urgent_first(client, world):
     ]
     assert listed[0]["patient_label"] == "Patient 0001" and listed[0]["note"] == "Lower RLQ"
     assert "summary" not in listed[0]
-    assert client.get("/lab/requests", headers=CLINICIAN).status_code == 403
+    # Clinical staff can follow the lab list; patients can't see it
+    assert client.get("/lab/requests", headers=CLINICIAN).status_code == 200
+    assert client.get("/lab/requests", headers=PATIENT).status_code == 403
 
 
 def test_uploading_with_the_request_completes_it(client, world):
