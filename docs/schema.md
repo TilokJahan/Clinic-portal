@@ -11,7 +11,10 @@ and [`schemav7_approval.sql`](../services/appointment-service/db/schemav7_approv
 booking requests: `appointments.approved_at`, `approved_by`, `declined_at`, `decline_reason`)
 and [`schemav8_booking_flow.sql`](../services/appointment-service/db/schemav8_booking_flow.sql) (symptoms first:
 `triage_results.patient_id`, and `appointment_id` may be `NULL` until a time is requested; several
-proposed times per appointment, and `reschedule_offers.patient_note`).
+proposed times per appointment, and `reschedule_offers.patient_note`)
+and [`schemav9_roles_labs.sql`](../services/appointment-service/db/schemav9_roles_labs.sql) (the physician role and
+`users.provider_id`, `triage_results.suggested_tests`, `lab_reports.exam_type` and `taken_on`, the `lab_requests`
+table, and `appointments.visit_summary`, `completed_at`, `completed_by`).
 Synthetic seed data: [`services/appointment-service/db/seed.sql`](../services/appointment-service/db/seed.sql).
 
 ```mermaid

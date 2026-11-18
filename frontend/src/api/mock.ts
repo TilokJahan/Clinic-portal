@@ -1,6 +1,7 @@
 import { sessionUser } from '../session'
 import { LAB_FILE_ACCEPT, labFileError } from '../labUpload'
-import type { Api, ApiResult, Appointment, PendingOffer, RescheduleOffer, UrgencyMatrix, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
+import { DEMO_ACCOUNTS } from '../auth'
+import type { AdminUser, Api, ApiResult, Appointment, ExamType, LabNeed, LabRequestEntry, PendingOffer, RescheduleOffer, UrgencyMatrix, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
 
 // In-memory stand-in for the appointment service, shaped exactly like docs/api.md.
 // Synthetic data only. Used by `npm run dev`; `npm run dev:api` talks to the real backend.
@@ -34,6 +35,43 @@ const listeners = new Set<(q: QueueEntry[]) => void>()
 const offers: { id: number; appointment_id: number; slot_id: number; status: RescheduleOffer['status']; created_at: string; patient_note?: string | null }[] = []
 // Assessments made before booking (POST /assessments): triage id -> patient id
 const assessmentOwner = new Map<number, number>()
+// Lab requests from clinical staff to the lab (app/labs.py)
+const labRequestRows: (LabRequestEntry & { requested_by: number })[] = []
+// Physician visit summaries and completion times
+const visitSummaries = new Map<number, { summary: string; at: string }>()
+// Roles changed by an admin in this browser session, and physicians' schedules
+const roleOverrides = new Map<number, { role: AdminUser['role']; provider_id: number | null }>()
+const PHYSICIAN_PROVIDER: Record<string, number> = { 'physician1@example.com': 1, 'physician2@example.com': 2, 'physician3@example.com': 3 }
+
+// Mirrors app/lab_needs.py (a shorter list of keywords)
+const TEST_RULES: [ExamType, string[]][] = [
+  ['blood', ['tired', 'fatigue', 'dizzy', 'fever', 'weight loss', 'thirst', 'pale', 'palpitation']],
+  ['urine', ['burning when', 'urinat', 'blood in urine', 'bladder']],
+  ['ultrasound', ['abdominal pain', 'stomach pain', 'belly pain', 'pelvic pain', 'pregnan', 'lump']],
+  ['xray', ['fracture', 'broken', 'fell down', 'sprain', 'persistent cough']],
+  ['mri', ['numb', 'tingling', 'sciatica', 'seizure', 'blurred vision']],
+  ['ct', ['head injury', 'hit my head', 'worst headache']],
+  ['ecg', ['chest pain', 'palpitation', 'heart racing', 'faint', 'short of breath']],
+]
+const suggestTests = (symptoms: string): ExamType[] => {
+  const text = ` ${symptoms.toLowerCase()} `
+  return TEST_RULES.filter(([, words]) => words.some((w) => text.includes(w))).map(([exam]) => exam)
+}
+const openRequest = (appointmentId: number, exam: ExamType) =>
+  labRequestRows.some((q) => q.appointment_id === appointmentId && q.exam_type === exam && (q.status === 'requested' || q.status === 'scheduled'))
+function labNeedsFor(appointmentId: number): LabNeed[] {
+  const tests = triage.find((t) => t.appointment_id === appointmentId)?.suggested_tests ?? []
+  return tests.map((exam) => {
+    if (openRequest(appointmentId, exam)) return { exam_type: exam, status: 'requested' as const }
+    const reports = labReports.filter((r) => r.appointment_id === appointmentId && (r.exam_type ?? 'blood') === exam)
+    if (!reports.length) return { exam_type: exam, status: 'missing' as const }
+    const recent = reports.some((r) => Date.now() - Date.parse(r.taken_on ?? r.uploaded_at) <= 40 * 86_400_000)
+    return { exam_type: exam, status: recent ? 'recent' as const : 'outdated' as const }
+  })
+}
+const requestsFor = (appointmentId: number, forPatient = false) => labRequestRows
+  .filter((q) => q.appointment_id === appointmentId && q.status !== 'cancelled')
+  .map(({ id, exam_type, urgency, status, requested_at, note }) => ({ id, exam_type, urgency, status, requested_at, note: forPatient ? null : note }))
 
 // Mirrors app/urgency.py (GET /urgency-matrix)
 const MATRIX: UrgencyMatrix = {
@@ -141,14 +179,15 @@ function slotsFor(date: string): Slot[] {
   return result
 }
 
-function fakeTriage(symptoms: string): Pick<TriageRecord, 'ai_urgency' | 'suggested_specialty' | 'red_flags' | 'summary'> {
+function fakeTriage(symptoms: string): Pick<TriageRecord, 'ai_urgency' | 'suggested_specialty' | 'red_flags' | 'summary' | 'suggested_tests'> {
+  const tests = suggestTests(symptoms)
   const text = symptoms.toLowerCase()
   if (['chest pain', "can't breathe", 'unconscious'].some((w) => text.includes(w)))
-    return { ai_urgency: 'urgent', suggested_specialty: 'Emergency Medicine', red_flags: ['possible cardiac or respiratory emergency'], summary: 'Potentially serious symptom reported. Clinician review needed now.' }
-  return { ai_urgency: 'routine', suggested_specialty: 'General Practice', red_flags: [], summary: 'No red-flag symptoms detected in the intake text.' }
+    return { ai_urgency: 'urgent', suggested_specialty: 'Emergency Medicine', red_flags: ['possible cardiac or respiratory emergency'], summary: 'Potentially serious symptom reported. Clinician review needed now.', suggested_tests: tests }
+  return { ai_urgency: 'routine', suggested_specialty: 'General Practice', red_flags: [], summary: 'No red-flag symptoms detected in the intake text.', suggested_tests: tests }
 }
 
-function addTriage(appointmentId: number | null, t: ReturnType<typeof fakeTriage>, createdMinutesAgo = 0): TriageRecord {
+function addTriage(appointmentId: number | null, t: Omit<ReturnType<typeof fakeTriage>, 'suggested_tests'> & { suggested_tests?: ExamType[] }, createdMinutesAgo = 0): TriageRecord {
   const record: TriageRecord = {
     id: nextId++, appointment_id: appointmentId, ...t, final_urgency: null, urgency: t.ai_urgency,
     overridden: false, latency_ms: 40, created_at: minutesAgo(createdMinutesAgo), reviewed_at: null,
@@ -182,7 +221,8 @@ function queue(): QueueEntry[] {
       const offerPending = Boolean(liveOffer(e.appointment_id))
       const latest = urgency ? LATEST_VISIT_HOURS[urgency] : undefined
       const needsEarlier = e.status === 'booked' && latest !== undefined && !offerPending && Date.parse(e.starts_at) > Date.now() + latest * 3_600_000
-      return { ...e, lab, urgency, needs_earlier_visit: needsEarlier, offer_pending: offerPending, offer_declined_note: declinedNote(e.appointment_id) }
+      return { ...e, lab, urgency, needs_earlier_visit: needsEarlier, offer_pending: offerPending, offer_declined_note: declinedNote(e.appointment_id),
+        lab_needs: labNeedsFor(e.appointment_id), lab_requests: requestsFor(e.appointment_id), visit_summary: visitSummaries.get(e.appointment_id)?.summary ?? null }
     })
     .sort((x, y) => {
       const ux = x.urgency ? ORDER[x.urgency] : 3, uy = y.urgency ? ORDER[y.urgency] : 3
@@ -209,7 +249,7 @@ function patientView(r: LabReport): LabReport {
   return { ...r, clinician_summary: null, reason: null }
 }
 
-async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boolean): Promise<ApiResult<LabReport>> {
+async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boolean, examType: ExamType = 'blood', takenOn?: string, requestId?: number): Promise<ApiResult<LabReport>> {
   await pause(500)
   const user = sessionUser()
   if (!user) return fail(401, 'Sign in to upload a report')
@@ -234,12 +274,16 @@ async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boole
         { display_name: 'Sodium', test_name: 'Sodium', canonical: 'sodium', value: 136, unit: 'mmol/L', ref_low: 135, ref_high: 145, flag: 'normal', confidence: 0.99, needs_verification: false, verification_reason: null },
       ],
     }
-  const report: LabReport = { ...completed, status: 'processing', processed_at: null, results: [], lab_urgency: null,
-    reason: null, clinician_summary: null, patient_explanation: null, extraction_confidence: null }
+  const table = examType === 'blood' || examType === 'urine'
+  const report: LabReport = { ...completed, exam_type: examType, taken_on: takenOn ?? null, status: table ? 'processing' : 'needs_review',
+    processed_at: table ? null : new Date().toISOString(), results: [], lab_urgency: null,
+    reason: table ? null : 'Imaging or ECG report: a clinician reads it', clinician_summary: null, patient_explanation: null, extraction_confidence: null }
   labReports.push(report)
   labFiles.set(report.id, file)
-  setTimeout(() => {
-    Object.assign(report, completed, { processed_at: new Date().toISOString() })
+  const request = requestId ? labRequestRows.find((q) => q.id === requestId) : undefined
+  if (request) request.status = 'completed'
+  if (table) setTimeout(() => {
+    Object.assign(report, completed, { exam_type: examType, taken_on: takenOn ?? null, processed_at: new Date().toISOString() })
     notify()
   }, 800)
   notify()
@@ -257,7 +301,10 @@ function myView(id: number): MyAppointment {
   const a = appointments.find((x) => x.id === id)!, slot = slots.get(a.slot_id)!
   return { id: a.id, slot_id: a.slot_id, status: a.status, created_at: a.created_at, starts_at: slot.starts_at, provider_name: slot.provider_name,
     specialty: slot.specialty, intake_submitted: triage.some((t) => t.appointment_id === a.id), pending_offers: pendingOffersFor(a.id), pending_offer: pendingOffersFor(a.id)[0] ?? null,
-    approved: Boolean(a.approved_at), declined: declines.has(a.id), decline_reason: declines.get(a.id) ?? null }
+    approved: Boolean(a.approved_at), declined: declines.has(a.id), decline_reason: declines.get(a.id) ?? null,
+    priority: triage.find((t) => t.appointment_id === a.id)?.urgency ?? null, reason_summary: triage.find((t) => t.appointment_id === a.id)?.summary ?? null,
+    lab_needs: labNeedsFor(a.id), lab_requests: requestsFor(a.id, true), lab_report_count: labReports.filter((r) => r.appointment_id === a.id).length,
+    visit_summary: visitSummaries.get(a.id)?.summary ?? null, completed_at: visitSummaries.get(a.id)?.at ?? null }
 }
 
 // Seed a few waiting patients for the clinician screens
@@ -377,8 +424,78 @@ export const mockApi: Api = {
     setTimeout(() => onQueue(queue()), 0)
     return () => { listeners.delete(onQueue) }
   },
-  uploadLabReport: (appointmentId, file) => acceptLabUpload(appointmentId, file, true),
-  uploadLabReportAsTech: (appointmentId, file) => acceptLabUpload(appointmentId, file, false),
+  uploadLabReport: (appointmentId, file, details) => acceptLabUpload(appointmentId, file, true, details?.examType, details?.takenOn),
+  uploadLabReportAsTech: (appointmentId, file, details) => acceptLabUpload(appointmentId, file, false, details?.examType, new Date().toISOString().slice(0, 10), details?.requestId),
+  async requestLab(appointmentId, examType, urgency, note) {
+    await pause(200)
+    const user = sessionUser()
+    if (!user || !['clinician', 'physician', 'admin'].includes(user.role)) return fail(403, 'Not allowed for your role')
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (openRequest(appointmentId, examType)) return fail(409, 'That test is already requested')
+    const slot = slots.get(appt.slot_id)!
+    const row = { id: nextId++, appointment_id: appointmentId, patient_label: `Patient ${String(appt.patient_id).padStart(4, '0')}`, exam_type: examType, urgency,
+      note: note.trim() || null, status: 'requested' as const, requested_at: new Date().toISOString(), requested_by_role: user.role,
+      visit_starts_at: slot.starts_at, provider_name: slot.provider_name, requested_by: user.id }
+    labRequestRows.push(row)
+    notify()
+    return ok({ id: row.id, exam_type: examType, urgency, status: row.status, requested_at: row.requested_at, note: row.note })
+  },
+  async labRequests(state) {
+    await pause(150)
+    const order: Record<Urgency, number> = { urgent: 0, soon: 1, routine: 2 }
+    const open = (q: LabRequestEntry) => q.status === 'requested' || q.status === 'scheduled'
+    return ok(labRequestRows.filter((q) => (state === 'open') === open(q))
+      .sort((x, y) => state === 'open' ? order[x.urgency] - order[y.urgency] || x.requested_at.localeCompare(y.requested_at) : y.requested_at.localeCompare(x.requested_at))
+      .map(({ requested_by: _by, ...q }) => q))
+  },
+  async updateLabRequest(requestId, status) {
+    await pause(150)
+    const row = labRequestRows.find((q) => q.id === requestId && (q.status === 'requested' || q.status === 'scheduled'))
+    if (!row) return fail(404, 'Open lab request not found')
+    row.status = status
+    notify()
+    return ok({ id: row.id, exam_type: row.exam_type, urgency: row.urgency, status: row.status, requested_at: row.requested_at, note: row.note })
+  },
+  async physicianSchedule() {
+    await pause(150)
+    const user = sessionUser()
+    const provider = user ? roleOverrides.get(user.id)?.provider_id ?? PHYSICIAN_PROVIDER[user.email] : undefined
+    return ok(queue().filter((e) => !provider || e.provider_id === provider).sort((x, y) => x.starts_at.localeCompare(y.starts_at)))
+  },
+  async completeVisit(appointmentId, summary) {
+    await pause(200)
+    const appt = appointments.find((a) => a.id === appointmentId)
+    if (!appt) return fail(404, 'Appointment not found')
+    if (appt.status !== 'booked' && appt.status !== 'checked_in') return fail(409, 'This visit is not open')
+    if (!appt.approved_at) return fail(409, "The booking isn't approved yet")
+    appt.status = 'completed'
+    visitSummaries.set(appointmentId, { summary: summary.trim(), at: new Date().toISOString() })
+    notify()
+    return ok(appt)
+  },
+  async providers() { await pause(100); return ok(PROVIDERS) },
+  async adminUsers() {
+    await pause(150)
+    const extra: AdminUser[] = [
+      { id: 7, email: 'physician1@example.com', role: 'physician', provider_id: 1, provider_name: PROVIDERS[0].name },
+      { id: 8, email: 'physician2@example.com', role: 'physician', provider_id: 2, provider_name: PROVIDERS[1].name },
+      { id: 5, email: 'admin1@example.com', role: 'admin', provider_id: null, provider_name: null },
+    ]
+    const users = [...DEMO_ACCOUNTS.filter((a) => !extra.some((e) => e.email === a.email)).map((a) => ({ id: a.id, email: a.email, role: a.role, provider_id: null, provider_name: null })), ...extra]
+    return ok(users.map((u) => {
+      const o = roleOverrides.get(u.id)
+      return o ? { ...u, ...o, provider_name: PROVIDERS.find((p) => p.id === o.provider_id)?.name ?? null } : u
+    }))
+  },
+  async updateUser(userId, role, providerId) {
+    await pause(150)
+    if (userId === sessionUser()?.id) return fail(409, "You can't change your own role")
+    if (role === 'physician' && !providerId) return fail(422, 'Choose the schedule this physician sees')
+    roleOverrides.set(userId, { role, provider_id: role === 'physician' ? providerId : null })
+    const users = await this.adminUsers()
+    return users.ok ? ok(users.data.find((u) => u.id === userId)!) : users
+  },
   async labWorklist(date) {
     await pause(150)
     const user = sessionUser()

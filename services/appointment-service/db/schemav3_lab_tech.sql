@@ -2,9 +2,11 @@
 -- existing databases too. Runs after schemav2_lab_results.sql and before seed.sql (the name sorts
 -- between them both in C and en_US order, which docker's init uses).
 
+-- The full list of roles, also those added later (schemav9 adds 'physician'): this file runs again
+-- on every deploy, before the later migrations, and must never narrow the list.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check
-    CHECK (role IN ('patient', 'clinician', 'admin', 'lab_tech'));
+    CHECK (role IN ('patient', 'clinician', 'physician', 'admin', 'lab_tech'));
 
 -- Demo lab technician for databases that already exist. On a brand-new database the users table
 -- is still empty here, so nothing is inserted: seed.sql adds this user itself, last, which keeps

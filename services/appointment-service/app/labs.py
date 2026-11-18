@@ -19,6 +19,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -28,7 +29,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app import db, metrics
-from app.auth import Clinician, CurrentUser, LabTech, Patient, require
+from app.auth import CurrentUser, LabTech, Patient, Staff, require
+from app.lab_needs import EXAM_TYPES, TABLE_EXAMS
+from app.models import (
+    LabRequestCreate,
+    LabRequestEntry,
+    LabRequestSummary,
+    LabRequestUpdate,
+)
 from app.queue import patient_label
 from app.storage import LabStore, get_store
 from app.triage import TriageServiceClient, get_triage_client
@@ -41,7 +49,13 @@ Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
 Store = Annotated[LabStore, Depends(get_store)]
 Triage = Annotated[TriageServiceClient, Depends(get_triage_client)]
 # Who may read lab reports and results. Lab technicians upload; they don't read.
-ReportReader = Annotated[CurrentUser, Depends(require("patient", "clinician", "admin"))]
+ReportReader = Annotated[
+    CurrentUser, Depends(require("patient", "clinician", "physician", "admin"))
+]
+ExamField = Annotated[
+    str, Form(description="blood, urine, ultrasound, xray, ct, mri, ecg or other")
+]
+TakenOnField = Annotated[date | None, Form(description="When the test was done (YYYY-MM-DD)")]
 
 MAX_BYTES = 10 * 1024 * 1024
 EXTENSIONS = {"application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg"}
@@ -65,6 +79,8 @@ class LabResult(BaseModel):
 class LabReport(BaseModel):
     id: int
     appointment_id: int
+    exam_type: str = "blood"
+    taken_on: date | None = None
     content_type: str
     status: str
     uploaded_at: datetime
@@ -82,6 +98,7 @@ class LabReport(BaseModel):
 
 class WorklistReport(BaseModel):
     id: int
+    exam_type: str = "blood"
     status: str
     uploaded_at: datetime
     lab_urgency: str | None
@@ -104,7 +121,8 @@ class ExplanationApproval(BaseModel):
 
 
 REPORT_COLUMNS = """
-    r.id, r.appointment_id, r.content_type, r.status, r.uploaded_at, r.processed_at,
+    r.id, r.appointment_id, r.exam_type, r.taken_on, r.content_type, r.status, r.uploaded_at,
+    r.processed_at,
     r.lab_urgency, r.reason, r.clinician_summary, r.patient_explanation,
     r.explanation_approved_at IS NOT NULL AS explanation_approved, r.explanation_approved_at,
     r.extraction_confidence
@@ -215,6 +233,9 @@ def _accept_upload(
     file: UploadFile,
     *,
     own_only: bool,
+    exam_type: str = "blood",
+    taken_on: date | None = None,
+    request_id: int | None = None,
 ) -> LabReport:
     """Store an uploaded report and queue it for reading; shared by patients and lab techs.
 
@@ -231,6 +252,18 @@ def _accept_upload(
         raise HTTPException(status.HTTP_409_CONFLICT, "Appointment is cancelled")
     if not own_only and appointment["status"] not in SCHEDULED:
         raise HTTPException(status.HTTP_409_CONFLICT, "Appointment is already completed")
+    if exam_type not in EXAM_TYPES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown kind of test")
+    if taken_on and taken_on > datetime.now(UTC).date():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "The test date is in the future")
+    if request_id is not None:
+        request = conn.execute(
+            "SELECT appointment_id, status FROM lab_requests WHERE id = %s", (request_id,)
+        ).fetchone()
+        if request is None or request["appointment_id"] != appointment_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Lab request not found")
+        if request["status"] not in ("requested", "scheduled"):
+            raise HTTPException(status.HTTP_409_CONFLICT, "The lab request is already closed")
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in EXTENSIONS:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Upload a PDF, PNG or JPEG")
@@ -242,18 +275,39 @@ def _accept_upload(
 
     blob_name = f"{appointment_id}/{uuid.uuid4()}{EXTENSIONS[content_type]}"
     store.save(blob_name, content, content_type)
+    # Imaging and ECG reports have no table of values to read: a clinician reads them
+    table = exam_type in TABLE_EXAMS
     row = conn.execute(
         f"""
         INSERT INTO lab_reports AS r
-            (appointment_id, blob_name, content_type, size_bytes, uploaded_by)
-        VALUES (%s, %s, %s, %s, %s)
+            (appointment_id, blob_name, content_type, size_bytes, uploaded_by, exam_type,
+             taken_on, status, reason, processed_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING {REPORT_COLUMNS}
         """,
-        (appointment_id, blob_name, content_type, len(content), user.id),
+        (
+            appointment_id,
+            blob_name,
+            content_type,
+            len(content),
+            user.id,
+            exam_type,
+            taken_on,
+            "processing" if table else "needs_review",
+            None if table else f"{EXAM_TYPES[exam_type]} report: a clinician reads it",
+            None if table else datetime.now(UTC),
+        ),
     ).fetchone()
+    if request_id is not None:
+        conn.execute(
+            "UPDATE lab_requests SET status = 'completed', report_id = %s, updated_at = now() "
+            "WHERE id = %s",
+            (row["id"], request_id),
+        )
     conn.commit()  # visible to the background task
     metrics.LAB_UPLOADS.labels(content_type, user.role).inc()
-    background.add_task(process_report, row["id"], content, content_type, triage)
+    if table:
+        background.add_task(process_report, row["id"], content, content_type, triage)
     # The uploader gets the patient's view: just that the report was received
     return _report(conn, row, for_patient=True)
 
@@ -267,10 +321,22 @@ def upload_lab_report(
     background: BackgroundTasks,
     appointment_id: int,
     file: Annotated[UploadFile, File(description="PDF, PNG or JPEG, up to 10 MB")],
+    exam_type: ExamField = "blood",
+    taken_on: TakenOnField = None,
 ) -> LabReport:
-    """Attach a lab report to your appointment. It's read in the background (202)."""
+    """Attach a test result to your appointment: a blood or urine test is read in the background
+    (202); an imaging or ECG report goes to a clinician to read."""
     return _accept_upload(
-        conn, user, store, triage, background, appointment_id, file, own_only=True
+        conn,
+        user,
+        store,
+        triage,
+        background,
+        appointment_id,
+        file,
+        own_only=True,
+        exam_type=exam_type,
+        taken_on=taken_on,
     )
 
 
@@ -283,10 +349,24 @@ def upload_lab_report_as_tech(
     background: BackgroundTasks,
     appointment_id: int,
     file: Annotated[UploadFile, File(description="PDF, PNG or JPEG, up to 10 MB")],
+    exam_type: ExamField = "blood",
+    taken_on: TakenOnField = None,
+    request_id: Annotated[int | None, Form(description="The lab request this answers")] = None,
 ) -> LabReport:
-    """Lab technicians: attach a report to any scheduled (booked or checked-in) appointment."""
+    """Lab technicians: attach a report to any scheduled (booked or checked-in) appointment.
+    With request_id, the lab request is completed."""
     return _accept_upload(
-        conn, user, store, triage, background, appointment_id, file, own_only=False
+        conn,
+        user,
+        store,
+        triage,
+        background,
+        appointment_id,
+        file,
+        own_only=False,
+        exam_type=exam_type,
+        taken_on=taken_on or datetime.now(UTC).date(),
+        request_id=request_id,
     )
 
 
@@ -317,7 +397,7 @@ def lab_worklist(
     ).fetchall()
     reports = conn.execute(
         """
-        SELECT appointment_id, id, status, uploaded_at, lab_urgency, reason
+        SELECT appointment_id, id, exam_type, status, uploaded_at, lab_urgency, reason
         FROM lab_reports WHERE appointment_id = ANY(%s) ORDER BY uploaded_at DESC, id DESC
         """,
         ([row["appointment_id"] for row in rows],),
@@ -362,7 +442,7 @@ def list_lab_reports(conn: Conn, user: ReportReader, appointment_id: int) -> lis
 
 @router.patch("/lab-reports/{report_id}")
 def approve_explanation(
-    conn: Conn, user: Clinician, report_id: int, body: ExplanationApproval
+    conn: Conn, user: Staff, report_id: int, body: ExplanationApproval
 ) -> LabReport:
     """Approve (and possibly edit) the explanation the patient will see."""
     row = conn.execute(
@@ -381,7 +461,7 @@ def approve_explanation(
 
 
 @router.get("/lab-reports/{report_id}/file")
-def lab_report_file(conn: Conn, _: Clinician, store: Store, report_id: int) -> Response:
+def lab_report_file(conn: Conn, _: Staff, store: Store, report_id: int) -> Response:
     """The original report, for the clinician to check against the extracted values."""
     row = conn.execute(
         "SELECT blob_name, content_type FROM lab_reports WHERE id = %s", (report_id,)
@@ -393,3 +473,98 @@ def lab_report_file(conn: Conn, _: Clinician, store: Store, report_id: int) -> R
         media_type=row["content_type"],
         headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
     )
+
+
+# --- Lab requests: clinical staff ask the lab for a test; the lab technician works the list ---
+
+
+@router.post("/appointments/{appointment_id}/lab-requests", status_code=status.HTTP_201_CREATED)
+def request_lab_test(
+    conn: Conn, user: Staff, appointment_id: int, body: LabRequestCreate
+) -> LabRequestSummary:
+    """Ask the lab for a test, with how urgently it is needed. One open request per kind of test."""
+    appointment = conn.execute(
+        "SELECT status FROM appointments WHERE id = %s", (appointment_id,)
+    ).fetchone()
+    if appointment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    if appointment["status"] not in SCHEDULED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The visit is no longer scheduled")
+    with conn.transaction():
+        conn.execute("SELECT 1 FROM appointments WHERE id = %s FOR UPDATE", (appointment_id,))
+        open_one = conn.execute(
+            "SELECT 1 FROM lab_requests WHERE appointment_id = %s AND exam_type = %s "
+            "AND status IN ('requested', 'scheduled')",
+            (appointment_id, body.exam_type),
+        ).fetchone()
+        if open_one:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"A {EXAM_TYPES[body.exam_type].lower()} is already requested",
+            )
+        row = conn.execute(
+            """
+            INSERT INTO lab_requests (appointment_id, exam_type, urgency, note, requested_by)
+            VALUES (%s, %s, %s, nullif(btrim(%s), ''), %s)
+            RETURNING id, exam_type, urgency, status, requested_at, note
+            """,
+            (appointment_id, body.exam_type, body.urgency, body.note or "", user.id),
+        ).fetchone()
+    metrics.LAB_REQUESTS.labels(body.urgency.value).inc()
+    return LabRequestSummary(**row)
+
+
+_URGENCY_ORDER = "CASE q.urgency WHEN 'urgent' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END"
+
+
+@router.get("/lab/requests")
+def lab_requests(
+    conn: Conn,
+    _: LabTech,
+    state: Annotated[str, Query(alias="status", description="open (default) or done")] = "open",
+) -> list[LabRequestEntry]:
+    """The lab's work: open requests most urgent first (then oldest first), or the latest done.
+    A label instead of the patient's name, and no symptoms or AI summaries."""
+    statuses = ["requested", "scheduled"] if state != "done" else ["completed", "cancelled"]
+    order = f"{_URGENCY_ORDER}, q.requested_at" if state != "done" else "q.updated_at DESC LIMIT 50"
+    rows = conn.execute(
+        f"""
+        SELECT q.id, q.appointment_id, a.patient_id, q.exam_type, q.urgency, q.note, q.status,
+               q.requested_at, u.role AS requested_by_role, s.starts_at AS visit_starts_at,
+               p.name AS provider_name
+        FROM lab_requests q
+        JOIN appointments a ON a.id = q.appointment_id
+        JOIN slots s ON s.id = a.slot_id
+        JOIN providers p ON p.id = s.provider_id
+        JOIN users u ON u.id = q.requested_by
+        WHERE q.status = ANY(%s)
+        ORDER BY {order}
+        """,
+        (statuses,),
+    ).fetchall()
+    return [
+        LabRequestEntry(
+            **{k: v for k, v in row.items() if k != "patient_id"},
+            patient_label=patient_label(row["patient_id"]),
+        )
+        for row in rows
+    ]
+
+
+@router.patch("/lab/requests/{request_id}")
+def update_lab_request(
+    conn: Conn, _: LabTech, request_id: int, body: LabRequestUpdate
+) -> LabRequestSummary:
+    """Mark a request scheduled (the patient has a time at the lab) or cancelled. Uploading the
+    result with request_id completes it."""
+    row = conn.execute(
+        """
+        UPDATE lab_requests SET status = %s, updated_at = now()
+        WHERE id = %s AND status IN ('requested', 'scheduled')
+        RETURNING id, exam_type, urgency, status, requested_at, note
+        """,
+        (body.status, request_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Open lab request not found")
+    return LabRequestSummary(**row)

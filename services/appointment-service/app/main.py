@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from psycopg import errors
 
-from app import approval, db, labs, metrics, reschedule, scheduling, urgency
+from app import admin, approval, db, labs, metrics, physician, reschedule, scheduling, urgency
 from app.auth import (
     AnyUser,
     Clinician,
@@ -22,6 +22,7 @@ from app.auth import (
     stream_clinician,
     stream_patient,
 )
+from app.lab_needs import suggested_tests
 from app.models import (
     Appointment,
     AppointmentCreate,
@@ -53,7 +54,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Appointment Service", version="0.1.0", lifespan=lifespan)
 metrics.install(app)
+app.include_router(admin.router)
 app.include_router(approval.router)
+app.include_router(physician.router)
 app.include_router(labs.router)
 app.include_router(reschedule.router)
 app.include_router(scheduling.router)
@@ -165,7 +168,9 @@ def create_assessment(
     assessment_id). Only the structured result is stored, never the symptom text."""
     assessment, latency_ms = _assess(triage, body.symptoms)
     with conn.transaction():
-        row = _store_triage(conn, None, assessment, latency_ms, patient_id=user.id)
+        row = _store_triage(
+            conn, None, assessment, latency_ms, user.id, suggested_tests(body.symptoms)
+        )
     record = TriageRecord.model_validate(row)
     return Assessment(triage=record, max_within_hours=urgency.max_within_hours(record.urgency))
 
@@ -252,7 +257,14 @@ def book_appointment(
                 (user.id, body.slot_id),
             ).fetchone()
             if assessment is not None:
-                _store_triage(conn, row["id"], assessment, latency_ms, patient_id=user.id)
+                _store_triage(
+                    conn,
+                    row["id"],
+                    assessment,
+                    latency_ms,
+                    user.id,
+                    suggested_tests(body.symptoms),
+                )
             if body.assessment_id is not None:
                 conn.execute(
                     "UPDATE triage_results SET appointment_id = %s WHERE id = %s",
@@ -292,7 +304,12 @@ def submit_intake(conn: Conn, user: Patient, triage: Triage, body: IntakeCreate)
     try:
         with conn.transaction():
             row = _store_triage(
-                conn, body.appointment_id, assessment, latency_ms, patient_id=user.id
+                conn,
+                body.appointment_id,
+                assessment,
+                latency_ms,
+                user.id,
+                suggested_tests(body.symptoms),
             )
     except errors.UniqueViolation as exc:
         # Two intakes for the same appointment raced each other
@@ -314,14 +331,16 @@ def _store_triage(
     assessment: TriageAssessment,
     latency_ms: int,
     patient_id: int,
+    tests: list[str],
 ) -> dict:
-    """Store only the structured result. The symptom text is never written to the database."""
+    """Store only the structured result and the suggested tests. The symptom text is never
+    written to the database."""
     row = conn.execute(
         f"""
         INSERT INTO triage_results AS t
             (appointment_id, patient_id, ai_urgency, suggested_specialty, red_flags, summary,
-             latency_ms, tokens_used)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             latency_ms, tokens_used, suggested_tests)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING {TRIAGE_COLUMNS}
         """,
         (
@@ -333,6 +352,7 @@ def _store_triage(
             assessment.summary,
             latency_ms,
             assessment.tokens_used,
+            tests,
         ),
     ).fetchone()
     metrics.INTAKES.labels(assessment.urgency.value).inc()

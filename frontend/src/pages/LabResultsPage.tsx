@@ -6,7 +6,8 @@ import { ErrorBanner } from '../components'
 import { formatDateTime } from '../format'
 import { PatientLabCard } from '../LabPanels'
 import { LAB_FILE_ACCEPT, labFileError } from '../labUpload'
-import type { LabStatus, LabWorklistEntry, MyAppointment } from '../types'
+import { EXAM_LABELS, EXAM_TYPES } from '../labTypes'
+import type { ExamType, LabStatus, LabWorklistEntry, MyAppointment } from '../types'
 
 const STATUS_LABELS: Record<LabStatus, string> = {
   processing: 'Processing', ready: 'Ready for clinician review', needs_review: 'Needs clinician review', failed: 'Processing failed',
@@ -25,6 +26,7 @@ export function LabResultsPage({ overview = false }: { overview?: boolean }) {
   const [refresh, setRefresh] = useState(0)
   const [appointmentId, setAppointmentId] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [examType, setExamType] = useState<ExamType>('blood')
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -64,7 +66,7 @@ export function LabResultsPage({ overview = false }: { overview?: boolean }) {
     const problem = labFileError(file)
     if (problem) { setUploadError(problem); return }
     setUploading(true)
-    const result = await api.uploadLabReportAsTech(appointment.appointment_id, file)
+    const result = await api.uploadLabReportAsTech(appointment.appointment_id, file, { examType })
     setUploading(false)
     if (!result.ok) {
       setUploadError(result.detail)
@@ -116,6 +118,11 @@ export function LabResultsPage({ overview = false }: { overview?: boolean }) {
             <select value={appointmentId} disabled={loading || uploading || worklist.length === 0} onChange={(event) => { setAppointmentId(event.target.value); setSuccess(''); setUploadError('') }} required>
               <option value="">Select a visit</option>
               {worklist.map((entry) => <option key={entry.appointment_id} value={entry.appointment_id}>{entry.patient_label} · {formatDateTime(entry.starts_at)} · {entry.provider_name} · Visit #{entry.appointment_id}</option>)}
+            </select>
+          </label>
+          <label className="lab-upload-field"><span>Kind of test</span>
+            <select value={examType} disabled={uploading} onChange={(event) => setExamType(event.target.value as ExamType)}>
+              {EXAM_TYPES.map((t) => <option key={t} value={t}>{EXAM_LABELS[t]}</option>)}
             </select>
           </label>
           <label className="lab-upload-field"><span>Lab report file</span>

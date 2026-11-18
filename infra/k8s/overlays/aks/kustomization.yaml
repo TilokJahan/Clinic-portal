@@ -37,6 +37,7 @@ configMapGenerator:
       - 02-schemav6_urgent_reserve.sql=../../../../services/appointment-service/db/schemav6_urgent_reserve.sql
       - 02-schemav7_approval.sql=../../../../services/appointment-service/db/schemav7_approval.sql
       - 02-schemav8_booking_flow.sql=../../../../services/appointment-service/db/schemav8_booking_flow.sql
+      - 02-schemav9_roles_labs.sql=../../../../services/appointment-service/db/schemav9_roles_labs.sql
       - 03-seed.sql=../../../../services/appointment-service/db/seed.sql
 patches:
   - path: patches/workload-identity.yaml

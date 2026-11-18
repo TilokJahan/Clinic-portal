@@ -18,9 +18,10 @@ CREATE TABLE IF NOT EXISTS reschedule_offers (
     responded_at      TIMESTAMPTZ
 );
 
--- One open offer per appointment, even when two clinicians click at the same time
-CREATE UNIQUE INDEX IF NOT EXISTS reschedule_offers_one_pending
-    ON reschedule_offers (appointment_id) WHERE status = 'pending';
+-- (This file used to add a unique index allowing one open offer per appointment. Since schema v8
+-- a clinician can propose up to three times, so the index is gone. It must not be created here
+-- again: this file runs on every deploy, and the index would fail on appointments that have
+-- several proposals open.)
 
 CREATE INDEX IF NOT EXISTS reschedule_offers_slot_idx ON reschedule_offers (proposed_slot_id);
 
