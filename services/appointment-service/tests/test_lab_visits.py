@@ -77,6 +77,23 @@ def test_the_lab_proposes_times_and_the_patient_accepts_one(client, world, reque
     assert second not in _times(client, request_id)["times"]
 
 
+def test_a_finished_request_moves_to_the_past_list(client, world, request_id):
+    """Booked or completed, a request never just disappears: it is listed, then listed as done."""
+    first = _times(client, request_id)["times"][0]
+    _propose(client, request_id, [first])
+    _schedule(client, request_id, first)
+    [booked] = client.get("/lab/requests", headers=LAB_TECH).json()
+    assert booked["status"] == "scheduled" and booked["updated_at"] is not None
+    cancelled = client.patch(
+        f"/lab/requests/{request_id}", json={"status": "cancelled"}, headers=LAB_TECH
+    )
+    assert cancelled.status_code == 200
+    assert client.get("/lab/requests", headers=LAB_TECH).json() == []
+    [past] = client.get("/lab/requests?status=done", headers=LAB_TECH).json()
+    assert past["status"] == "cancelled" and past["scheduled_at"] is not None
+    assert past["updated_at"] >= booked["updated_at"]
+
+
 def test_the_patient_can_choose_another_free_time(client, world, request_id):
     _propose(client, request_id, _times(client, request_id)["times"][:1])
     mine = _times(client, request_id, headers=PATIENT)

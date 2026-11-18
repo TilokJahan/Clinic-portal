@@ -372,6 +372,8 @@ class LabRequestEntry(BaseModel):
     requested_by_role: str
     proposed_times: list[datetime] = []
     scheduled_at: datetime | None = None
+    # When the status last changed: for a done request, when it was completed or cancelled
+    updated_at: datetime | None = None
     visit_starts_at: datetime
     provider_name: str
 

@@ -25,7 +25,7 @@ Every change to this file goes through a pull request that all three of us revie
 | GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results (not lab techs) | done |
 | PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
 | POST | `/appointments/{id}/lab-requests` | appointment | clinician, physician | Ask the lab for a test, with an urgency | done |
-| GET | `/lab/requests?status=open\|done` | appointment | lab_tech | The lab's requests, most urgent first | done |
+| GET | `/lab/requests?status=open\|done` | appointment | lab_tech | Open requests (requested, proposed, scheduled) most urgent first, or past ones (completed, cancelled) latest first; each has `updated_at` | done |
 | PATCH | `/lab/requests/{id}` | appointment | lab_tech | Mark a request scheduled or cancelled | done |
 | GET | `/physician/schedule` | appointment | physician | The physician's own upcoming and recent visits | done |
 | POST | `/appointments/{id}/complete` | appointment | physician | Complete a visit with a summary for the patient | done |
