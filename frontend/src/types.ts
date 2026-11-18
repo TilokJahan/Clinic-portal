@@ -197,6 +197,8 @@ export interface LabRequestEntry extends LabRequestSummary {
   requested_by_role: string
   visit_starts_at: string
   provider_name: string
+  /** When the status last changed: for a past request, when it was completed or cancelled */
+  updated_at?: string | null
 }
 
 export interface Provider {

@@ -528,16 +528,20 @@ def lab_requests(
     _: LabRequestReader,
     state: Annotated[str, Query(alias="status", description="open (default) or done")] = "open",
 ) -> list[LabRequestEntry]:
-    """The lab's work: open requests most urgent first (then oldest first), or the latest done.
+    """The lab's work: open requests most urgent first (then oldest first), or the past ones
+    (completed or cancelled), latest first.
     A label instead of the patient's name, and no symptoms or AI summaries."""
     statuses = (
         ["requested", "proposed", "scheduled"] if state != "done" else ["completed", "cancelled"]
     )
-    order = f"{_URGENCY_ORDER}, q.requested_at" if state != "done" else "q.updated_at DESC LIMIT 50"
+    order = (
+        f"{_URGENCY_ORDER}, q.requested_at" if state != "done" else "q.updated_at DESC LIMIT 100"
+    )
     rows = conn.execute(
         f"""
         SELECT q.id, q.appointment_id, a.patient_id, q.exam_type, q.urgency, q.note, q.status,
-               q.requested_at, q.proposed_times, q.scheduled_at, u.role AS requested_by_role,
+               q.requested_at, q.proposed_times, q.scheduled_at, q.updated_at,
+               u.role AS requested_by_role,
                s.starts_at AS visit_starts_at,
                p.name AS provider_name
         FROM lab_requests q

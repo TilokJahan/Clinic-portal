@@ -303,7 +303,7 @@ async function acceptLabUpload(appointmentId: number, file: File, ownOnly: boole
   labReports.push(report)
   labFiles.set(report.id, file)
   const request = requestId ? labRequestRows.find((q) => q.id === requestId) : undefined
-  if (request) request.status = 'completed'
+  if (request) Object.assign(request, { status: 'completed', updated_at: new Date().toISOString() })
   if (table) setTimeout(() => {
     Object.assign(report, completed, { exam_type: examType, taken_on: takenOn ?? null, processed_at: new Date().toISOString() })
     notify()
@@ -468,7 +468,7 @@ export const mockApi: Api = {
     const order: Record<Urgency, number> = { urgent: 0, soon: 1, routine: 2 }
     const open = (q: LabRequestEntry) => q.status === 'requested' || q.status === 'proposed' || q.status === 'scheduled'
     return ok(labRequestRows.filter((q) => (state === 'open') === open(q))
-      .sort((x, y) => state === 'open' ? order[x.urgency] - order[y.urgency] || x.requested_at.localeCompare(y.requested_at) : y.requested_at.localeCompare(x.requested_at))
+      .sort((x, y) => state === 'open' ? order[x.urgency] - order[y.urgency] || x.requested_at.localeCompare(y.requested_at) : (y.updated_at ?? y.requested_at).localeCompare(x.updated_at ?? x.requested_at))
       .map(({ requested_by: _by, ...q }) => q))
   },
   async labTimes(requestId) {
@@ -506,6 +506,7 @@ export const mockApi: Api = {
     const row = labRequestRows.find((q) => q.id === requestId && (q.status === 'requested' || q.status === 'proposed' || q.status === 'scheduled'))
     if (!row) return fail(404, 'Open lab request not found')
     row.status = status
+    row.updated_at = new Date().toISOString()
     notify()
     return ok({ id: row.id, exam_type: row.exam_type, urgency: row.urgency, status: row.status, requested_at: row.requested_at, note: row.note })
   },
