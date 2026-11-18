@@ -346,7 +346,8 @@ def test_worklist_defaults_to_today_and_can_be_empty(client, lab_setup):
     assert client.get("/lab/worklist?date=nope", headers=LAB_TECH).status_code == 422
 
 
-def test_admins_can_use_the_lab_routes_too(client, lab_setup):
+def test_admins_can_use_the_lab_routes_too(client, db, lab_setup):
+    db.execute("INSERT INTO users (email, role) VALUES ('admin@example.com', 'admin')")
     admin = as_user(5, role="admin", email="admin@example.com")
     assert client.get(f"/lab/worklist?date={DAY}", headers=admin).status_code == 200
 

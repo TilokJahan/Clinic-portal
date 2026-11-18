@@ -5,6 +5,7 @@ import { BookingPage } from './pages/BookingPage'
 import { BillingPage } from './pages/BillingPage'
 import { Dashboard } from './pages/Dashboard'
 import { IntakePage } from './pages/IntakePage'
+import { InvitePage } from './pages/InvitePage'
 import { LabRequestsPage } from './pages/LabRequestsPage'
 import { LoginPage } from './pages/LoginPage'
 import { LabResultsPage, PatientLabResultsPage } from './pages/LabResultsPage'
@@ -27,7 +28,7 @@ function App() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  if (!session) return <Routes><Route path="/login" element={<LoginPage onLogin={setSession} />} /><Route path="*" element={<Navigate to="/login" replace />} /></Routes>
+  if (!session) return <Routes><Route path="/login" element={<LoginPage onLogin={setSession} />} /><Route path="/invite/:token" element={<InvitePage onLogin={setSession} />} /><Route path="*" element={<Navigate to="/login" replace />} /></Routes>
 
   const { user } = session
   const role = user.role
@@ -65,6 +66,7 @@ function App() {
               {role === 'clinician' && <NavLink to="/" end><LayoutDashboard size={16} />Overview</NavLink>}
               {clinician && <NavLink to="/queue"><Users size={16} />Patient queue</NavLink>}
               {role === 'physician' && <NavLink to="/" end><Stethoscope size={16} />My schedule</NavLink>}
+              {(role === 'clinician' || role === 'physician') && <NavLink to="/lab-requests"><TestTube2 size={16} />Lab requests</NavLink>}
               {admin && <NavLink to="/physician"><Stethoscope size={16} />Schedules</NavLink>}
               {role === 'lab_tech' && <NavLink to="/" end><TestTube2 size={16} />Lab requests</NavLink>}
               {admin && <NavLink to="/lab-requests"><TestTube2 size={16} />Lab requests</NavLink>}
@@ -81,9 +83,10 @@ function App() {
       <div className="page-content"><ScrollReveal key={location.pathname}><Routes>
         <Route path="/" element={home} />
         <Route path="/login" element={<LoginPage onLogin={setSession} />} />
+        <Route path="/invite/:token" element={<InvitePage onLogin={setSession} />} />
         <Route path="/queue" element={clinician ? <QueuePage /> : <Navigate to="/" replace />} />
         <Route path="/physician" element={physician ? <PhysicianPage /> : <Navigate to="/" replace />} />
-        <Route path="/lab-requests" element={labTech ? <LabRequestsPage /> : <Navigate to="/" replace />} />
+        <Route path="/lab-requests" element={labTech ? <LabRequestsPage /> : clinician || physician ? <LabRequestsPage readOnly /> : <Navigate to="/" replace />} />
         <Route path="/lab-results" element={labTech ? <LabResultsPage /> : patient ? <PatientLabResultsPage /> : <Navigate to="/" replace />} />
         <Route path="/book" element={patient ? <BookingPage /> : <Navigate to="/" replace />} />
         <Route path="/appointments" element={patient ? <MyAppointmentsPage /> : <Navigate to="/" replace />} />

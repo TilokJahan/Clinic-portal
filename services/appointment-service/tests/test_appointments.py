@@ -84,7 +84,7 @@ def test_cancelled_slot_is_listed_and_bookable_again(client, data, db):
     [{}, {"date": "07-01-2030"}, {"date": "2030-01-07", "provider_id": 0}],
     ids=["missing-date", "bad-date", "bad-provider"],
 )
-def test_slots_rejects_bad_query(client, params):
+def test_slots_rejects_bad_query(client, data, params):
     assert client.get("/slots", params=params, headers=as_user(1)).status_code == 422
 
 
@@ -142,7 +142,7 @@ def test_patient_id_in_the_body_is_ignored(client, data):
     assert response.json()["patient_id"] == data["patient"]
 
 
-def test_book_rejects_invalid_body(client):
+def test_book_rejects_invalid_body(client, data):
     assert client.post("/appointments", json={}, headers=as_user(1)).status_code == 422
 
 

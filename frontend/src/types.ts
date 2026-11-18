@@ -173,10 +173,21 @@ export interface LabRequestSummary {
   id: number
   exam_type: ExamType
   urgency: Urgency
-  status: 'requested' | 'scheduled' | 'completed' | 'cancelled'
+  status: 'requested' | 'proposed' | 'scheduled' | 'completed' | 'cancelled'
   requested_at: string
   /** For the lab; null in the patient's view */
   note: string | null
+  /** Lab times offered to the patient, and the one they booked */
+  proposed_times?: string[]
+  scheduled_at?: string | null
+}
+
+/** Free lab times for a request, within how soon its urgency needs the test */
+export interface LabTimes {
+  within_hours: number
+  /** false when nothing is free in time: these are the first free times after */
+  in_time: boolean
+  times: string[]
 }
 
 /** A lab request as the lab technician sees it (no symptoms or AI summaries) */
@@ -200,6 +211,34 @@ export interface AdminUser {
   role: Role
   provider_id: number | null
   provider_name: string | null
+  /** false: the account can't sign in */
+  active?: boolean
+}
+
+export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked'
+
+export interface Invitation {
+  id: number
+  email: string
+  role: Role
+  provider_id: number | null
+  provider_name: string | null
+  created_at: string
+  expires_at: string
+  status: InvitationStatus
+  /** Path of the invite link (add the site's origin); only while pending */
+  link: string | null
+}
+
+/** What someone who opens an invite link sees */
+export interface InvitationView {
+  email: string
+  role: Role
+  provider_name: string | null
+  status: InvitationStatus
+  expires_at: string
+  /** "accept" in the demo; "sign_up" with Entra External ID */
+  method: 'accept' | 'sign_up'
 }
 
 export interface User {
@@ -324,12 +363,24 @@ export interface Api {
   /** Lab technician: open requests (most urgent first) or recently done ones */
   labRequests(state: 'open' | 'done'): Promise<ApiResult<LabRequestEntry[]>>
   updateLabRequest(requestId: number, status: 'scheduled' | 'cancelled'): Promise<ApiResult<LabRequestSummary>>
+  /** Lab technician: free lab times for a request, and proposing one to three to the patient */
+  labTimes(requestId: number): Promise<ApiResult<LabTimes>>
+  proposeLabTimes(requestId: number, times: string[]): Promise<ApiResult<LabRequestSummary>>
+  /** Patient: free lab times they may choose, and booking one (proposed or their own) */
+  myLabTimes(requestId: number): Promise<ApiResult<LabTimes>>
+  scheduleLabVisit(requestId: number, startsAt: string): Promise<ApiResult<LabRequestSummary>>
   /** Physician: their own upcoming visits, then those completed in the last two weeks */
   physicianSchedule(): Promise<ApiResult<QueueEntry[]>>
   completeVisit(appointmentId: number, summary: string): Promise<ApiResult<Appointment>>
   providers(): Promise<ApiResult<Provider[]>>
   adminUsers(): Promise<ApiResult<AdminUser[]>>
-  updateUser(userId: number, role: Role, providerId: number | null): Promise<ApiResult<AdminUser>>
+  updateUser(userId: number, role: Role, providerId: number | null, active?: boolean): Promise<ApiResult<AdminUser>>
+  invite(email: string, role: Role, providerId: number | null): Promise<ApiResult<Invitation>>
+  invitations(): Promise<ApiResult<Invitation[]>>
+  revokeInvitation(invitationId: number): Promise<ApiResult<Invitation>>
+  /** No sign-in needed: the link is the secret */
+  viewInvitation(token: string): Promise<ApiResult<InvitationView>>
+  acceptInvitation(token: string): Promise<ApiResult<{ access_token: string; user: User }>>
   labReports(appointmentId: number): Promise<ApiResult<LabReport[]>>
   approveLabExplanation(reportId: number, text: string): Promise<ApiResult<LabReport>>
   /** The original file (clinicians), for checking extracted values against it */

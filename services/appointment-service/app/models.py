@@ -127,10 +127,13 @@ class LabRequestSummary(BaseModel):
     id: int
     exam_type: ExamType
     urgency: Urgency
-    status: Literal["requested", "scheduled", "completed", "cancelled"]
+    status: Literal["requested", "proposed", "scheduled", "completed", "cancelled"]
     requested_at: datetime
     # Staff only; None in the patient's view
     note: str | None = None
+    # Lab times offered to the patient, and the one they booked
+    proposed_times: list[datetime] = []
+    scheduled_at: datetime | None = None
 
 
 class TriageReview(BaseModel):
@@ -342,12 +345,16 @@ class AdminUser(BaseModel):
     role: Literal["patient", "clinician", "physician", "admin", "lab_tech"]
     provider_id: int | None
     provider_name: str | None
+    # False: the account can't sign in
+    active: bool = True
 
 
 class AdminUserUpdate(BaseModel):
     role: Literal["patient", "clinician", "physician", "admin", "lab_tech"]
     # Required for a physician: whose schedule they see
     provider_id: int | None = Field(default=None, gt=0)
+    # Disable (false) or enable (true) the account; unchanged when left out
+    active: bool | None = None
 
 
 class LabRequestEntry(BaseModel):
@@ -360,9 +367,11 @@ class LabRequestEntry(BaseModel):
     exam_type: ExamType
     urgency: Urgency
     note: str | None
-    status: Literal["requested", "scheduled", "completed", "cancelled"]
+    status: Literal["requested", "proposed", "scheduled", "completed", "cancelled"]
     requested_at: datetime
     requested_by_role: str
+    proposed_times: list[datetime] = []
+    scheduled_at: datetime | None = None
     visit_starts_at: datetime
     provider_name: str
 

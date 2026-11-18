@@ -33,7 +33,8 @@ async function request<T>(path: string, init?: RequestInit, json = true): Promis
   const response = await send(path, init, json)
   if (!response) return unreachable
   const body = await response.json().catch(() => null)
-  if (response.status === 401) endSession() // expired or revoked: back to the sign-in page
+  // Expired or revoked, or an admin disabled the account: back to the sign-in page
+  if (response.status === 401 || (response.status === 403 && body?.detail === 'This account is disabled')) endSession()
   if (!response.ok) return { ok: false, status: response.status, detail: describe(body?.detail, response.status) }
   return { ok: true, data: body as T }
 }
@@ -108,11 +109,21 @@ export const httpApi: Api = {
     request(`/appointments/${appointmentId}/lab-requests`, json('POST', { exam_type: examType, urgency, note: note || null })),
   labRequests: (state) => request(`/lab/requests?status=${state}`),
   updateLabRequest: (requestId, status) => request(`/lab/requests/${requestId}`, json('PATCH', { status })),
+  labTimes: (requestId) => request(`/lab/requests/${requestId}/times`),
+  proposeLabTimes: (requestId, times) => request(`/lab/requests/${requestId}/propose`, json('POST', { times })),
+  myLabTimes: (requestId) => request(`/lab-requests/${requestId}/times`),
+  scheduleLabVisit: (requestId, startsAt) => request(`/lab-requests/${requestId}/schedule`, json('POST', { starts_at: startsAt })),
   physicianSchedule: () => request('/physician/schedule'),
   completeVisit: (appointmentId, summary) => request(`/appointments/${appointmentId}/complete`, json('POST', { summary })),
   providers: () => request('/providers'),
   adminUsers: () => request('/admin/users'),
-  updateUser: (userId, role, providerId) => request(`/admin/users/${userId}`, json('PATCH', { role, provider_id: providerId })),
+  updateUser: (userId, role, providerId, active) =>
+    request(`/admin/users/${userId}`, json('PATCH', { role, provider_id: providerId, ...(active === undefined ? {} : { active }) })),
+  invite: (email, role, providerId) => request('/admin/invitations', json('POST', { email, role, provider_id: providerId })),
+  invitations: () => request('/admin/invitations'),
+  revokeInvitation: (invitationId) => request(`/admin/invitations/${invitationId}/revoke`, { method: 'POST' }),
+  viewInvitation: (token) => request(`/invitations/${encodeURIComponent(token)}`),
+  acceptInvitation: (token) => request(`/invitations/${encodeURIComponent(token)}/accept`, { method: 'POST' }),
   labReports: (appointmentId) => request(`/appointments/${appointmentId}/lab-reports`),
   approveLabExplanation: (reportId, text) =>
     request(`/lab-reports/${reportId}`, json('PATCH', { patient_explanation: text })),

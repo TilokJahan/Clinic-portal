@@ -1684,3 +1684,29 @@ a.patient-footer-item:hover > span > span { color: var(--teal-deep); text-decora
   .admin-row { grid-template-columns: 1fr; }
   .admin-actions { justify-content: flex-start; }
 }
+
+/* --- Lab visits ---------------------------------------------------------------------------- */
+.time-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 10px; }
+.lab-propose { display: grid; gap: 6px; }
+.lab-visit-time { display: block; padding: 8px 10px; background: #f2eef8; border-radius: 8px; font-size: 13px; }
+.lab-visit-time svg { vertical-align: -3px; margin-right: 6px; }
+.lab-visit-card h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.request-state.proposed { background: #fff4dc; color: #8a5a00; }
+.request-state.scheduled { background: #f2eef8; color: #482071; }
+
+/* --- Admin: invitations and privileges ----------------------------------------------------- */
+.invite-form { padding: 20px; display: grid; gap: 12px; margin-bottom: 16px; }
+.invite-fields { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(160px, 1fr) minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
+.invite-fields label { display: grid; gap: 5px; color: #71858f; font-size: 12px; font-weight: 600; }
+.invite-fields input, .invite-fields select { width: 100%; padding: 9px 10px; border: 1px solid #e8e4ed; border-radius: 8px; font: inherit; font-size: 13px; background: #fff; }
+.invite-link { display: grid; gap: 8px; margin: 6px 0 10px; padding: 12px 14px; background: #f2eef8; border-radius: 10px; font-size: 13px; }
+.invite-link code { padding: 8px 10px; background: #fff; border: 1px solid #e8e4ed; border-radius: 8px; word-break: break-all; font-size: 12px; }
+.invitations { margin-bottom: 16px; }
+.disabled-user { opacity: .6; }
+.privileges { padding: 6px 18px; overflow-x: auto; }
+.privilege-row { display: grid; grid-template-columns: minmax(260px, 2.4fr) repeat(5, minmax(80px, 1fr)); gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #e8e4ed; font-size: 13px; }
+.privilege-row:last-child { border-bottom: 0; }
+.privilege-row span:not(:first-child) { text-align: center; color: #8b42f3; }
+.privilege-head { color: #71858f; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.privilege-head span:not(:first-child) { color: #71858f; }
+@media (max-width: 760px) { .invite-fields { grid-template-columns: 1fr; } }

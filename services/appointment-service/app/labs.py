@@ -52,6 +52,10 @@ Triage = Annotated[TriageServiceClient, Depends(get_triage_client)]
 ReportReader = Annotated[
     CurrentUser, Depends(require("patient", "clinician", "physician", "admin"))
 ]
+# The lab's list of requests: the lab works it; clinical staff follow it
+LabRequestReader = Annotated[
+    CurrentUser, Depends(require("lab_tech", "clinician", "physician", "admin"))
+]
 ExamField = Annotated[
     str, Form(description="blood, urine, ultrasound, xray, ct, mri, ecg or other")
 ]
@@ -262,7 +266,7 @@ def _accept_upload(
         ).fetchone()
         if request is None or request["appointment_id"] != appointment_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Lab request not found")
-        if request["status"] not in ("requested", "scheduled"):
+        if request["status"] not in ("requested", "proposed", "scheduled"):
             raise HTTPException(status.HTTP_409_CONFLICT, "The lab request is already closed")
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in EXTENSIONS:
@@ -494,7 +498,7 @@ def request_lab_test(
         conn.execute("SELECT 1 FROM appointments WHERE id = %s FOR UPDATE", (appointment_id,))
         open_one = conn.execute(
             "SELECT 1 FROM lab_requests WHERE appointment_id = %s AND exam_type = %s "
-            "AND status IN ('requested', 'scheduled')",
+            "AND status IN ('requested', 'proposed', 'scheduled')",
             (appointment_id, body.exam_type),
         ).fetchone()
         if open_one:
@@ -506,7 +510,8 @@ def request_lab_test(
             """
             INSERT INTO lab_requests (appointment_id, exam_type, urgency, note, requested_by)
             VALUES (%s, %s, %s, nullif(btrim(%s), ''), %s)
-            RETURNING id, exam_type, urgency, status, requested_at, note
+            RETURNING id, exam_type, urgency, status, requested_at, note, proposed_times,
+                scheduled_at
             """,
             (appointment_id, body.exam_type, body.urgency, body.note or "", user.id),
         ).fetchone()
@@ -520,17 +525,20 @@ _URGENCY_ORDER = "CASE q.urgency WHEN 'urgent' THEN 0 WHEN 'soon' THEN 1 ELSE 2 
 @router.get("/lab/requests")
 def lab_requests(
     conn: Conn,
-    _: LabTech,
+    _: LabRequestReader,
     state: Annotated[str, Query(alias="status", description="open (default) or done")] = "open",
 ) -> list[LabRequestEntry]:
     """The lab's work: open requests most urgent first (then oldest first), or the latest done.
     A label instead of the patient's name, and no symptoms or AI summaries."""
-    statuses = ["requested", "scheduled"] if state != "done" else ["completed", "cancelled"]
+    statuses = (
+        ["requested", "proposed", "scheduled"] if state != "done" else ["completed", "cancelled"]
+    )
     order = f"{_URGENCY_ORDER}, q.requested_at" if state != "done" else "q.updated_at DESC LIMIT 50"
     rows = conn.execute(
         f"""
         SELECT q.id, q.appointment_id, a.patient_id, q.exam_type, q.urgency, q.note, q.status,
-               q.requested_at, u.role AS requested_by_role, s.starts_at AS visit_starts_at,
+               q.requested_at, q.proposed_times, q.scheduled_at, u.role AS requested_by_role,
+               s.starts_at AS visit_starts_at,
                p.name AS provider_name
         FROM lab_requests q
         JOIN appointments a ON a.id = q.appointment_id
@@ -560,8 +568,8 @@ def update_lab_request(
     row = conn.execute(
         """
         UPDATE lab_requests SET status = %s, updated_at = now()
-        WHERE id = %s AND status IN ('requested', 'scheduled')
-        RETURNING id, exam_type, urgency, status, requested_at, note
+        WHERE id = %s AND status IN ('requested', 'proposed', 'scheduled')
+        RETURNING id, exam_type, urgency, status, requested_at, note, proposed_times, scheduled_at
         """,
         (body.status, request_id),
     ).fetchone()

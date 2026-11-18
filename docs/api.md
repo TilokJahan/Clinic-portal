@@ -558,3 +558,37 @@ note.
 those completed in the last 14 days (`QueueEntry`). `POST /appointments/{id}/complete` with
 `{"summary": "..."}` needs an approved booking on their schedule; the patient sees
 `visit_summary` and `completed_at` on `GET /appointments`.
+
+
+## Lab visits and admin invitations (schema v10, file `schemav9z_lab_visits.sql`)
+
+**Lab visits.** After a test is requested, the lab technician proposes lab times; the lab is
+open weekdays 8:00–16:00 (clinic time), one patient every 15 minutes.
+
+| Method | Path | Who | What |
+|---|---|---|---|
+| GET | `/lab/requests/{id}/times` | lab_tech | Free lab times within the urgency's window (urgent 24 h, soon 3 days, routine 2 weeks); `{"within_hours", "in_time", "times"}`. If nothing is free in time, the first free times after (`in_time: false`) |
+| POST | `/lab/requests/{id}/propose` | lab_tech | `{"times": [...]}`, one to three: status becomes `proposed` |
+| GET | `/lab-requests/{id}/times` | patient (own) | Free lab times they may choose |
+| POST | `/lab-requests/{id}/schedule` | patient (own) | `{"starts_at": "..."}`: one of the proposed times or another free time that fits; status `scheduled`. Can be moved again the same way. 409 if taken (a unique index allows one patient per lab time) |
+| GET | `/lab/requests` | lab_tech, clinician, physician, admin | The lab list; clinical staff follow it read-only |
+
+Lab requests now carry `proposed_times` and `scheduled_at`; statuses are `requested`,
+`proposed`, `scheduled`, `completed`, `cancelled`.
+
+**Invitations.** The admin invites someone by email with a role; the portal makes a personal
+link (`/invite/<token>`, 7 days, works once) that the admin sends from their own email (the app
+has no email service: "Email it" opens a draft in the admin's email app).
+
+| Method | Path | Who | What |
+|---|---|---|---|
+| POST | `/admin/invitations` | admin | `{"email", "role", "provider_id"}` (a physician needs a schedule). Replaces an older pending invitation for the same email. Returns the invitation with its `link` |
+| GET | `/admin/invitations` | admin | The last 100, newest first, with `status`: pending, accepted, expired, revoked |
+| POST | `/admin/invitations/{id}/revoke` | admin | Withdraw a pending one |
+| GET | `/invitations/{token}` | anyone with the link | Who it's for and as what, and `method`: `accept` (demo) or `sign_up` (Entra) |
+| POST | `/invitations/{token}/accept` | anyone with the link | Demo sign-in only: creates the account with the role and returns a token like `/auth/dev-login`. With Entra External ID, signing up with the invited email applies the invitation at the first sign-in |
+
+**Account control.** `PATCH /admin/users/{id}` also takes `"active": false|true`. Roles and the
+active flag are read from the database on every request, so a role change applies at once and a
+disabled account gets 403 `"This account is disabled"` (the app then signs it out). Admins can't
+change or disable their own account.

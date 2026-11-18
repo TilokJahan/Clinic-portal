@@ -5,6 +5,7 @@ import { api } from '../api'
 import { UrgencyPill } from '../components'
 import { dayIsOver, formatDateTime } from '../format'
 import { EXAM_LABELS, NEED_LABEL } from '../labTypes'
+import { LabVisitCard, openLabRequests } from '../LabVisits'
 import type { MyAppointment } from '../types'
 
 /** The patient's visits: upcoming ones with their status, and past ones with what the visit
@@ -60,12 +61,13 @@ function VisitCard({ visit, past }: { visit: MyAppointment; past: boolean }) {
       <span className="drawer-label"><TestTube2 size={13} /> TESTS</span>
       <ul className="need-list">
         {requests.map((q) => <li key={`q${q.id}`} className={`need ${q.status === 'completed' ? 'ok' : 'info'}`}>
-          <b>{EXAM_LABELS[q.exam_type]}</b><span>{q.status === 'completed' ? 'Done' : q.status === 'scheduled' ? 'Scheduled at the lab' : `Requested by your care team (${q.urgency})`}</span></li>)}
+          <b>{EXAM_LABELS[q.exam_type]}</b><span>{q.status === 'completed' ? 'Done' : q.status === 'scheduled' && q.scheduled_at ? `Lab visit ${formatDateTime(q.scheduled_at)}` : q.status === 'proposed' ? 'The lab proposed times: choose one below' : `Requested by your care team (${q.urgency})`}</span></li>)}
         {needs.filter((n) => !requests.some((q) => q.exam_type === n.exam_type)).map((n) =>
           <li key={n.exam_type} className={`need ${n.status === 'recent' ? 'ok' : n.status === 'requested' ? 'info' : 'warn'}`}><b>{EXAM_LABELS[n.exam_type]}</b><span>{NEED_LABEL[n.status]}</span></li>)}
       </ul>
       {(visit.lab_report_count ?? 0) > 0 && <p className="field-hint"><FlaskConical size={13} /> {visit.lab_report_count} result{visit.lab_report_count === 1 ? '' : 's'} on file. <NavLink to="/lab-results">See results</NavLink></p>}
     </section>}
+    {open && openLabRequests(visit.lab_requests).filter((q) => q.status !== 'requested').map((q) => <LabVisitCard key={q.id} request={q} />)}
     {visit.visit_summary && <section className="visit-part visit-summary">
       <span className="drawer-label"><ClipboardCheck size={13} /> YOUR DOCTOR’S SUMMARY{visit.completed_at ? ` · ${formatDateTime(visit.completed_at)}` : ''}</span>
       <p>{visit.visit_summary}</p>

@@ -1,7 +1,7 @@
 import { sessionUser } from '../session'
 import { LAB_FILE_ACCEPT, labFileError } from '../labUpload'
 import { DEMO_ACCOUNTS } from '../auth'
-import type { AdminUser, Api, ApiResult, Appointment, ExamType, LabNeed, LabRequestEntry, PendingOffer, RescheduleOffer, UrgencyMatrix, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
+import type { AdminUser, Api, ApiResult, Appointment, ExamType, Invitation, LabNeed, LabRequestEntry, LabTimes, PendingOffer, RescheduleOffer, UrgencyMatrix, LabReport, LabWorklistEntry, MyAppointment, QueueEntry, Slot, StreamStatus, TriageRecord, Urgency } from '../types'
 
 // In-memory stand-in for the appointment service, shaped exactly like docs/api.md.
 // Synthetic data only. Used by `npm run dev`; `npm run dev:api` talks to the real backend.
@@ -40,7 +40,9 @@ const labRequestRows: (LabRequestEntry & { requested_by: number })[] = []
 // Physician visit summaries and completion times
 const visitSummaries = new Map<number, { summary: string; at: string }>()
 // Roles changed by an admin in this browser session, and physicians' schedules
-const roleOverrides = new Map<number, { role: AdminUser['role']; provider_id: number | null }>()
+const roleOverrides = new Map<number, { role: AdminUser['role']; provider_id: number | null; active?: boolean }>()
+// Admin invitations (app/admin.py); the mock can't register real accounts, it only shows the flow
+const invitationRows: Invitation[] = []
 const PHYSICIAN_PROVIDER: Record<string, number> = { 'physician1@example.com': 1, 'physician2@example.com': 2, 'physician3@example.com': 3 }
 
 // Mirrors app/lab_needs.py (a shorter list of keywords)
@@ -58,7 +60,7 @@ const suggestTests = (symptoms: string): ExamType[] => {
   return TEST_RULES.filter(([, words]) => words.some((w) => text.includes(w))).map(([exam]) => exam)
 }
 const openRequest = (appointmentId: number, exam: ExamType) =>
-  labRequestRows.some((q) => q.appointment_id === appointmentId && q.exam_type === exam && (q.status === 'requested' || q.status === 'scheduled'))
+  labRequestRows.some((q) => q.appointment_id === appointmentId && q.exam_type === exam && (q.status === 'requested' || q.status === 'proposed' || q.status === 'scheduled'))
 function labNeedsFor(appointmentId: number): LabNeed[] {
   const tests = triage.find((t) => t.appointment_id === appointmentId)?.suggested_tests ?? []
   return tests.map((exam) => {
@@ -71,7 +73,27 @@ function labNeedsFor(appointmentId: number): LabNeed[] {
 }
 const requestsFor = (appointmentId: number, forPatient = false) => labRequestRows
   .filter((q) => q.appointment_id === appointmentId && q.status !== 'cancelled')
-  .map(({ id, exam_type, urgency, status, requested_at, note }) => ({ id, exam_type, urgency, status, requested_at, note: forPatient ? null : note }))
+  .map(({ id, exam_type, urgency, status, requested_at, note, proposed_times, scheduled_at }) =>
+    ({ id, exam_type, urgency, status, requested_at, note: forPatient ? null : note, proposed_times, scheduled_at }))
+// Lab hours: weekdays 8:00-16:00 local time, one patient every 15 minutes (app/lab_visits.py)
+function mockLabTimes(urgency: Urgency, limit = 12): LabTimes {
+  const hours = { urgent: 24, soon: 72, routine: 336 }[urgency]
+  const booked = new Set(labRequestRows.filter((q) => q.status === 'scheduled' && q.scheduled_at).map((q) => q.scheduled_at!))
+  const free: string[] = []
+  const now = Date.now()
+  for (let d = 0; d <= 21 && free.length < 400; d++) {
+    const day = new Date(); day.setDate(day.getDate() + d)
+    if ([0, 6].includes(day.getDay())) continue
+    for (let m = 8 * 60; m < 16 * 60; m += 15) {
+      const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(m / 60), m % 60)
+      if (at.getTime() > now && !booked.has(at.toISOString())) free.push(at.toISOString())
+    }
+  }
+  const inWindow = free.filter((t) => Date.parse(t) <= now + hours * 3_600_000)
+  return inWindow.length ? { within_hours: hours, in_time: true, times: inWindow.slice(0, limit) } : { within_hours: hours, in_time: false, times: free.slice(0, limit) }
+}
+const summaryOf = (q: (typeof labRequestRows)[number]) =>
+  ({ id: q.id, exam_type: q.exam_type, urgency: q.urgency, status: q.status, requested_at: q.requested_at, note: q.note, proposed_times: q.proposed_times, scheduled_at: q.scheduled_at })
 
 // Mirrors app/urgency.py (GET /urgency-matrix)
 const MATRIX: UrgencyMatrix = {
@@ -444,14 +466,44 @@ export const mockApi: Api = {
   async labRequests(state) {
     await pause(150)
     const order: Record<Urgency, number> = { urgent: 0, soon: 1, routine: 2 }
-    const open = (q: LabRequestEntry) => q.status === 'requested' || q.status === 'scheduled'
+    const open = (q: LabRequestEntry) => q.status === 'requested' || q.status === 'proposed' || q.status === 'scheduled'
     return ok(labRequestRows.filter((q) => (state === 'open') === open(q))
       .sort((x, y) => state === 'open' ? order[x.urgency] - order[y.urgency] || x.requested_at.localeCompare(y.requested_at) : y.requested_at.localeCompare(x.requested_at))
       .map(({ requested_by: _by, ...q }) => q))
   },
+  async labTimes(requestId) {
+    await pause(150)
+    const row = labRequestRows.find((q) => q.id === requestId)
+    return row ? ok(mockLabTimes(row.urgency)) : fail(404, 'Lab request not found')
+  },
+  async proposeLabTimes(requestId, times) {
+    await pause(200)
+    const row = labRequestRows.find((q) => q.id === requestId)
+    if (!row) return fail(404, 'Lab request not found')
+    if (row.status !== 'requested' && row.status !== 'proposed') return fail(409, 'This request is already scheduled')
+    row.status = 'proposed'
+    row.proposed_times = [...times].sort()
+    notify()
+    return ok(summaryOf(row))
+  },
+  async myLabTimes(requestId) {
+    await pause(150)
+    const row = labRequestRows.find((q) => q.id === requestId && appointments.some((a) => a.id === q.appointment_id && a.patient_id === mockPatientId()))
+    return row ? ok(mockLabTimes(row.urgency, 40)) : fail(404, 'Lab request not found')
+  },
+  async scheduleLabVisit(requestId, startsAt) {
+    await pause(200)
+    const row = labRequestRows.find((q) => q.id === requestId && appointments.some((a) => a.id === q.appointment_id && a.patient_id === mockPatientId()))
+    if (!row) return fail(404, 'Lab request not found')
+    if (labRequestRows.some((q) => q.id !== requestId && q.status === 'scheduled' && q.scheduled_at === startsAt)) return fail(409, 'That lab time was just taken. Please pick another.')
+    row.status = 'scheduled'
+    row.scheduled_at = startsAt
+    notify()
+    return ok({ ...summaryOf(row), note: null })
+  },
   async updateLabRequest(requestId, status) {
     await pause(150)
-    const row = labRequestRows.find((q) => q.id === requestId && (q.status === 'requested' || q.status === 'scheduled'))
+    const row = labRequestRows.find((q) => q.id === requestId && (q.status === 'requested' || q.status === 'proposed' || q.status === 'scheduled'))
     if (!row) return fail(404, 'Open lab request not found')
     row.status = status
     notify()
@@ -475,6 +527,30 @@ export const mockApi: Api = {
     return ok(appt)
   },
   async providers() { await pause(100); return ok(PROVIDERS) },
+  async invite(email, role, providerId) {
+    await pause(200)
+    if (role === 'physician' && !providerId) return fail(422, 'Choose the schedule this physician sees')
+    invitationRows.filter((i) => i.email === email.trim().toLowerCase() && i.status === 'pending').forEach((i) => { i.status = 'revoked'; i.link = null })
+    const token = Math.random().toString(36).slice(2)
+    const row: Invitation = { id: nextId++, email: email.trim().toLowerCase(), role, provider_id: providerId, provider_name: PROVIDERS.find((p) => p.id === providerId)?.name ?? null,
+      created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), status: 'pending', link: `/invite/${token}` }
+    invitationRows.unshift(row)
+    return ok(row)
+  },
+  async invitations() { await pause(120); return ok(invitationRows) },
+  async revokeInvitation(invitationId) {
+    await pause(120)
+    const row = invitationRows.find((i) => i.id === invitationId && i.status === 'pending')
+    if (!row) return fail(404, 'Pending invitation not found')
+    row.status = 'revoked'; row.link = null
+    return ok(row)
+  },
+  async viewInvitation(token) {
+    await pause(120)
+    const row = invitationRows.find((i) => i.link === `/invite/${token}`)
+    return row ? ok({ email: row.email, role: row.role, provider_name: row.provider_name, status: row.status, expires_at: row.expires_at, method: 'accept' as const }) : fail(404, "This invitation link isn't valid")
+  },
+  async acceptInvitation() { await pause(120); return fail(409, 'The offline demo can’t create accounts. Use the real backend.') },
   async adminUsers() {
     await pause(150)
     const extra: AdminUser[] = [
@@ -488,11 +564,11 @@ export const mockApi: Api = {
       return o ? { ...u, ...o, provider_name: PROVIDERS.find((p) => p.id === o.provider_id)?.name ?? null } : u
     }))
   },
-  async updateUser(userId, role, providerId) {
+  async updateUser(userId, role, providerId, active) {
     await pause(150)
-    if (userId === sessionUser()?.id) return fail(409, "You can't change your own role")
+    if (userId === sessionUser()?.id) return fail(409, "You can't change your own account")
     if (role === 'physician' && !providerId) return fail(422, 'Choose the schedule this physician sees')
-    roleOverrides.set(userId, { role, provider_id: role === 'physician' ? providerId : null })
+    roleOverrides.set(userId, { role, provider_id: role === 'physician' ? providerId : null, active: active ?? roleOverrides.get(userId)?.active ?? true })
     const users = await this.adminUsers()
     return users.ok ? ok(users.data.find((u) => u.id === userId)!) : users
   },

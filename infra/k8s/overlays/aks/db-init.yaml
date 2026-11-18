@@ -32,7 +32,7 @@ spec:
                   -f /sql/02-schemav2_lab_results.sql -f /sql/02-schemav3_lab_tech.sql \
                   -f /sql/02-schemav4_lab_uploaded_by.sql -f /sql/02-schemav5_reschedule.sql \
                   -f /sql/02-schemav6_urgent_reserve.sql -f /sql/02-schemav7_approval.sql -f /sql/02-schemav8_booking_flow.sql \
-                  -f /sql/02-schemav9_roles_labs.sql \
+                  -f /sql/02-schemav9_roles_labs.sql -f /sql/02-schemav9z_lab_visits.sql \
                   -f /sql/03-seed.sql
                 echo "schema, migrations and seed loaded"
               fi

@@ -160,7 +160,7 @@ LAB_NEEDS_SQL = f"""(
         CASE
             WHEN EXISTS (
                 SELECT 1 FROM lab_requests q WHERE q.appointment_id = a.id
-                  AND q.exam_type = st.exam AND q.status IN ('requested', 'scheduled')
+                  AND q.exam_type = st.exam AND q.status IN ('requested', 'proposed', 'scheduled')
             ) THEN 'requested'
             WHEN EXISTS (
                 SELECT 1 FROM lab_reports r WHERE r.appointment_id = a.id
@@ -180,6 +180,7 @@ LAB_NEEDS_SQL = f"""(
 LAB_REQUESTS_SQL = """(
     SELECT coalesce(jsonb_agg(jsonb_build_object(
         'id', q.id, 'exam_type', q.exam_type, 'urgency', q.urgency, 'status', q.status,
-        'note', q.note, 'requested_at', q.requested_at) ORDER BY q.requested_at DESC), '[]'::jsonb)
+        'note', q.note, 'requested_at', q.requested_at, 'proposed_times', q.proposed_times,
+        'scheduled_at', q.scheduled_at) ORDER BY q.requested_at DESC), '[]'::jsonb)
     FROM lab_requests q WHERE q.appointment_id = a.id AND q.status <> 'cancelled'
 )"""
