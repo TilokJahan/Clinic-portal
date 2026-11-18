@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Ambulance, ArrowDown, ArrowRight, Baby, Bean, Bone, Brain, CalendarDays, CalendarCheck, Ear, Heart, HeartPulse, MapPin, MessageCircle, Phone, ReceiptText, Ribbon, Salad, ScanFace, Save, ShieldCheck, Stethoscope, TestTube2 } from 'lucide-react'
 import { dayIsOver, formatDateTime } from '../format'
+import { EXAM_LABELS } from '../labTypes'
 import { addPatientMessage, loadPatientMessages, type PatientMessage } from '../patientMessages'
 import { api } from '../api'
 import { PatientLabCard } from '../LabPanels'
@@ -34,7 +35,7 @@ function WomanIcon({ size, strokeWidth }: { size?: number; strokeWidth?: number 
 const PATIENT_TOOLS = [
   { title: 'Message your doctor (demo)', description: 'Save a sample message in this browser only.', icon: MessageCircle, to: null, action: 'message' },
   { title: 'View lab results', description: 'Check results shared with you by your care team.', icon: TestTube2, to: '/lab-results' },
-  { title: 'Manage your appointments', description: 'Choose a time for your next clinic visit.', icon: CalendarCheck, to: '/book' },
+  { title: 'My appointments', description: 'Upcoming visits, and summaries of past ones.', icon: CalendarCheck, to: '/appointments' },
   { title: 'Billing and statements', description: 'Explore sample statements and balances.', icon: ReceiptText, to: '/billing' },
 ]
 
@@ -118,6 +119,8 @@ export function PatientHome({ patientId }: { patientId: number }) {
               <p>{next.approved === false ? 'Requested visit' : 'Next visit'}: {next.provider_name}, {formatDateTime(next.starts_at)}.{next.approved === false
                 ? ' A clinician is reviewing your symptoms and will confirm this time or offer a better one.'
                 : next.intake_submitted ? ' Your care team has your symptoms.' : ''}</p>
+              {next.lab_requests?.filter((q) => q.status === 'requested' || q.status === 'scheduled').map((q) =>
+                <p key={q.id} className="lab-request-note">Your care team asked for a <b>{EXAM_LABELS[q.exam_type].toLowerCase()}</b> ({q.urgency}). {q.status === 'scheduled' ? 'The lab has scheduled it.' : 'The lab will contact you, or attach a recent result below.'}</p>)}
               {!next.intake_submitted && <NavLink to={`/intake?appointment=${next.id}`}>Describe your symptoms <ArrowRight size={15} /></NavLink>}
               <NavLink to={`/schedule?appointment=${next.id}`}>Change the time <ArrowRight size={15} /></NavLink></>
           : today

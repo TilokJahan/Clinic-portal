@@ -28,3 +28,13 @@ CROSS JOIN LATERAL (
     CROSS JOIN generate_series(0, 5) AS n
     WHERE extract(isodow FROM d) < 6
 ) s;
+
+-- Demo physicians, each linked to one provider's schedule (added last so the other demo users'
+-- ids stay the same)
+INSERT INTO users (email, role, provider_id)
+SELECT v.email, 'physician', p.id
+FROM (VALUES ('physician1@example.com', 'Dr. Alex Example'),
+             ('physician2@example.com', 'Dr. Sam Sample'),
+             ('physician3@example.com', 'Dr. Jordan Test')) AS v (email, provider)
+JOIN providers p ON p.name = v.provider
+ON CONFLICT (email) DO NOTHING;

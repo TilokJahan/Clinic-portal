@@ -6,7 +6,7 @@ import { formatDateTime, formatTime, formatWait, initials, waitMinutes } from '.
 import { loadPatientMessages, messagesForPatientLabel, PATIENT_MESSAGES_STORAGE_KEY, type PatientMessage } from '../patientMessages'
 import type { QueueEntry, StreamStatus, Urgency } from '../types'
 import { useQueue } from '../useQueue'
-import { ClinicianLabSection, LabReasonChip } from '../LabPanels'
+import { ClinicianLabSection, LabNeedsSection, LabReasonChip } from '../LabPanels'
 import { ClinicianOfferSection } from '../Scheduling'
 
 const FILTERS = ['all', 'requests', 'urgent', 'soon', 'routine'] as const
@@ -23,7 +23,7 @@ export function QueueRow({ entry, compact = false, selected = false, onSelect }:
     <div className="patient-cell"><div className={`patient-avatar avatar-${entry.appointment_id % 4}`}>{initials(entry.patient_label)}</div><div><b>{entry.patient_label}</b>{entry.awaiting_approval && <> <span className="approval-badge">awaiting approval</span></>}<span>{formatTime(entry.starts_at)} · {entry.provider_name}</span></div></div>
     <div className="reason-cell"><span>{t ? t.summary : entry.lab ? 'Lab report received' : 'Waiting for the patient’s intake'}</span>{t && t.red_flags.length > 0 && <small>{t.red_flags.length} red flag{t.red_flags.length > 1 ? 's' : ''}</small>}<LabReasonChip reason={entry.lab?.reason ?? null} urgency={entry.lab?.urgency ?? null} /></div>
     <div className="wait-cell">{formatWait(waitMinutes(entry))}</div>
-    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && entry.needs_earlier_visit && <small className="review-tag earlier">needs earlier visit</small>}{!compact && entry.offer_pending && <small className="review-tag">times proposed</small>}{!compact && !entry.offer_pending && entry.offer_declined_note != null && <small className="review-tag earlier">times declined</small>}{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
+    <div className="triage-cell"><UrgencyPill urgency={entry.urgency} />{!compact && entry.needs_earlier_visit && <small className="review-tag earlier">needs earlier visit</small>}{!compact && entry.offer_pending && <small className="review-tag">times proposed</small>}{!compact && !entry.offer_pending && entry.offer_declined_note != null && <small className="review-tag earlier">times declined</small>}{!compact && entry.lab_needs?.some((n) => n.status === 'missing' || n.status === 'outdated') && <small className="review-tag earlier">test needed</small>}{!compact && entry.lab_requests?.some((q) => q.status === 'requested' || q.status === 'scheduled') && <small className="review-tag">test requested</small>}{!compact && t?.reviewed_at && <small className={t.overridden ? 'review-tag overridden' : 'review-tag'}>{t.overridden ? 'overridden' : 'accepted'}</small>}</div>
   </>
   if (!onSelect) return <div className="queue-row">{cells}</div>
   return <button className={`queue-row queue-row-button ${selected ? 'selected' : ''}`} onClick={onSelect}>{cells}</button>
@@ -120,6 +120,7 @@ export function QueuePage() {
             {error && <ErrorBanner>{error}</ErrorBanner>}
           </div>
         </>}
+      <LabNeedsSection entry={selected} />
       <ApprovalSection entry={selected} />
       <ClinicianOfferSection entry={selected} />
       <ClinicianLabSection appointmentId={selected.appointment_id} refreshKey={JSON.stringify(selected.lab)} />

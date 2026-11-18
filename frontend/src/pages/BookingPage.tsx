@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Activity, ArrowRight, CalendarDays, Check, Loader2, ShieldCheck } from 'lucide-react'
+import { Activity, ArrowRight, CalendarDays, Check, FlaskConical, Loader2, Paperclip, ShieldCheck, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import { AiLabel, ErrorBanner, UrgencyPill } from '../components'
 import { formatDateTime, formatTime, nextWeekday, timeZoneName, todayInput } from '../format'
 import { CLINIC_PHONE, SlotChoices, TimeframeChips } from '../Scheduling'
-import type { Appointment, Assessment, Slot, Timeframe, TimeframeAvailability } from '../types'
+import { ExamFields } from '../LabPanels'
+import { LAB_FILE_ACCEPT, labFileError } from '../labUpload'
+import { daysAgo, EXAM_LABELS, RECENT_DAYS } from '../labTypes'
+import type { Appointment, Assessment, ExamType, Slot, Timeframe, TimeframeAvailability } from '../types'
+
+/** A result the patient attaches while booking; uploaded once the request exists. */
+type Attachment = { file: File; examType: ExamType; takenOn: string }
 
 type Mode = 'timeframe' | 'day'
 const MAX_SYMPTOMS = 4000
@@ -19,6 +25,19 @@ export function BookingPage() {
   const [assessment, setAssessment] = useState<Assessment | null>(null)
   const [error, setError] = useState('')
   const [booked, setBooked] = useState<{ appointment: Appointment; slot: Slot } | null>(null)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [uploads, setUploads] = useState<{ label: string; ok: boolean; detail?: string }[]>([])
+
+  async function onBooked(b: { appointment: Appointment; slot: Slot }) {
+    setBooked(b)
+    const done = []
+    for (const a of attachments) {
+      const r = await api.uploadLabReport(b.appointment.id, a.file, { examType: a.examType, takenOn: a.takenOn || undefined })
+      done.push({ label: EXAM_LABELS[a.examType], ok: r.ok, detail: r.ok ? undefined : r.detail })
+    }
+    setUploads(done)
+    setAttachments([])
+  }
 
   async function assess(e: React.FormEvent) {
     e.preventDefault()
@@ -36,10 +55,11 @@ export function BookingPage() {
       <h2>Request sent</h2>
       <p>{booked.slot.provider_name}, {formatDateTime(booked.slot.starts_at)}. We’re holding this time for you.</p>
       <p>A clinician will review your symptoms and how urgent they are, then confirm the visit or propose other times. You’ll see the answer on your home page.</p>
+      {uploads.map((u, i) => <p key={i} className={u.ok ? 'saved-message' : 'field-hint warn'}>{u.ok ? <Check size={14} /> : null} {u.label} {u.ok ? 'attached for your care team.' : `couldn’t be attached: ${u.detail}`}</p>)}
       <p className="field-hint">If you think this may be an emergency, call your local emergency number now.</p>
       <div className="hero-actions centered">
         <NavLink className="button button-primary" to="/">Go to home <ArrowRight size={16} /></NavLink>
-        <button className="button button-secondary" onClick={() => { setBooked(null); setAssessment(null); setSymptoms('') }}>Request another visit</button>
+        <button className="button button-secondary" onClick={() => { setBooked(null); setAssessment(null); setSymptoms(''); setUploads([]) }}>Request another visit</button>
       </div>
     </div></>
 
@@ -63,7 +83,9 @@ export function BookingPage() {
         </>
         : <AssessmentResult assessment={assessment} onEdit={() => setAssessment(null)} />}
     </form>
-    {assessment && <TimeStep assessment={assessment} onBooked={setBooked} />}</>
+    {assessment && (assessment.triage.suggested_tests?.length ?? 0) > 0 &&
+      <RecentResults suggested={assessment.triage.suggested_tests!} attachments={attachments} onChange={setAttachments} />}
+    {assessment && <TimeStep assessment={assessment} onBooked={onBooked} />}</>
 }
 
 function AssessmentResult({ assessment, onEdit }: { assessment: Assessment; onEdit: () => void }) {
@@ -225,4 +247,41 @@ function TimeStep({ assessment, onBooked }: { assessment: Assessment; onBooked: 
 
 function Header() {
   return <div className="welcome-row"><div><h1>Book an appointment</h1><p>Tell us what’s going on, choose a time that fits, and a clinician confirms your visit.</p></div></div>
+}
+
+/** The symptoms suggest a test: ask for a recent result (last 40 days) before choosing a time.
+ *  The files are uploaded with the request, so the clinician sees them when deciding. */
+function RecentResults({ suggested, attachments, onChange }: { suggested: ExamType[]; attachments: Attachment[]; onChange: (a: Attachment[]) => void }) {
+  const [examType, setExamType] = useState<ExamType>(suggested[0])
+  const [takenOn, setTakenOn] = useState('')
+  const [error, setError] = useState('')
+  const names = suggested.map((t) => EXAM_LABELS[t].toLowerCase())
+  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names[0]
+
+  function add(file: File | undefined) {
+    if (!file) return
+    const problem = labFileError(file)
+    if (problem) { setError(problem); return }
+    if (!takenOn) { setError('Please enter the date of the test first.'); return }
+    setError('')
+    onChange([...attachments, { file, examType, takenOn }])
+    setTakenOn('')
+  }
+
+  return <div className="panel form-panel recent-results">
+    <div className="form-step"><span><FlaskConical size={15} /></span><div><h2>Do you have a recent test result?</h2>
+      <p>Your symptoms may need a <b>{list}</b>. If you had one in the last {RECENT_DAYS} days, attach it here and your care team will see it with your request. Otherwise they can ask the lab for one.</p></div></div>
+    {attachments.length > 0 && <ul className="attachment-list">{attachments.map((a, i) => <li key={i}>
+      <Paperclip size={14} /> <b>{EXAM_LABELS[a.examType]}</b> · {a.file.name} · taken {a.takenOn}
+      {daysAgo(a.takenOn) > RECENT_DAYS && <span className="field-hint warn"> (older than {RECENT_DAYS} days)</span>}
+      <button type="button" className="icon-button" aria-label="Remove" onClick={() => onChange(attachments.filter((_, j) => j !== i))}><Trash2 size={14} /></button>
+    </li>)}</ul>}
+    <ExamFields examType={examType} onExamType={setExamType} takenOn={takenOn} onTakenOn={setTakenOn} />
+    {error && <ErrorBanner>{error}</ErrorBanner>}
+    <label className="button button-secondary upload-button">
+      <Paperclip size={16} /> Attach a result (PDF or photo)
+      <input type="file" accept={LAB_FILE_ACCEPT} hidden onChange={(e) => { add(e.target.files?.[0]); e.target.value = '' }} />
+    </label>
+    <span className="field-hint">No result? That’s fine, just choose a time below.</span>
+  </div>
 }

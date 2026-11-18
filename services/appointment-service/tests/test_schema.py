@@ -88,3 +88,32 @@ def test_slot_must_end_after_it_starts(db):
             "INSERT INTO slots (provider_id, starts_at, ends_at) VALUES (%s, now(), now())",
             (provider_id,),
         )
+
+
+def test_every_migration_runs_again_on_a_database_in_use(db):
+    """The db-init Job applies every schemav*.sql on each deploy: none may fail on real data, such
+    as an appointment with several times proposed at once (allowed since schema v8)."""
+    provider_id = _add_provider(db)
+    first = _add_slot(db, provider_id)
+    second = _add_slot(db, provider_id, starts_at="2030-01-07 10:00+00")
+    third = _add_slot(db, provider_id, starts_at="2030-01-07 10:30+00")
+    patient = _add_patient(db, "p@example.com")
+    clinician = db.execute(
+        "INSERT INTO users (email, role) VALUES ('c@example.com', 'clinician') RETURNING id"
+    ).fetchone()[0]
+    appointment = db.execute(
+        "INSERT INTO appointments (patient_id, slot_id) VALUES (%s, %s) RETURNING id",
+        (patient, first),
+    ).fetchone()[0]
+    for slot in (second, third):
+        db.execute(
+            "INSERT INTO reschedule_offers (appointment_id, proposed_slot_id, offered_by) "
+            "VALUES (%s, %s, %s)",
+            (appointment, slot, clinician),
+        )
+    for path in sorted(DB_DIR.glob("schemav*.sql")):
+        db.execute(path.read_text())
+    pending = db.execute(
+        "SELECT count(*) FROM reschedule_offers WHERE status = 'pending'"
+    ).fetchone()[0]
+    assert pending == 2

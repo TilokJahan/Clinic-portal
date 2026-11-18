@@ -8,8 +8,9 @@ Two modes, chosen by AUTH_MODE:
 - "entra-external-id" (cloud): the frontend signs in with Microsoft Entra External ID (hosted
   sign-up/sign-in with email and password) and sends the ID token. We verify it against the
   tenant's public keys (RS256, issuer = the tenant, audience = ENTRA_CLIENT_ID), then look the
-  user up by email. Emails listed in ADMIN_EMAILS, CLINICIAN_EMAILS or LAB_TECH_EMAILS (comma
-  separated, set by operators) get that role; anyone else signing up becomes a patient.
+  user up by email. Emails listed in ADMIN_EMAILS, CLINICIAN_EMAILS, PHYSICIAN_EMAILS or
+  LAB_TECH_EMAILS (comma separated, set by operators) get that role; anyone else signing up
+  becomes a patient. An admin can also change roles in the app (app/admin.py).
 
 Either way the endpoints only see a CurrentUser with our own users.id and role.
 """
@@ -26,7 +27,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app import db
 
-ROLES = ("patient", "clinician", "admin", "lab_tech")
+ROLES = ("patient", "clinician", "physician", "admin", "lab_tech")
 DEV_TOKEN_SECONDS = 8 * 3600
 
 
@@ -100,9 +101,12 @@ def _user_from_claims(conn: psycopg.Connection, claims: dict) -> CurrentUser:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "The token has no email address")
     # Operator-controlled lists set staff roles, also for existing users (that's how staff are
     # added). Everyone else is created as a patient on first sign-in and keeps their role.
-    # An email on several lists gets the most privileged role: admin, then clinician, then lab_tech.
+    # An email on several lists gets the most privileged role: admin, then physician, then
+    # clinician, then lab_tech.
     if email in _listed("ADMIN_EMAILS"):
         configured = "admin"
+    elif email in _listed("PHYSICIAN_EMAILS"):
+        configured = "physician"
     elif email in _listed("CLINICIAN_EMAILS"):
         configured = "clinician"
     elif email in _listed("LAB_TECH_EMAILS"):
@@ -200,3 +204,8 @@ Patient = Annotated[CurrentUser, Depends(require("patient"))]
 Clinician = Annotated[CurrentUser, Depends(require("clinician", "admin"))]
 # Lab technicians upload reports for scheduled patients (admins can too); no clinical data access
 LabTech = Annotated[CurrentUser, Depends(require("lab_tech", "admin"))]
+# Physicians see their own provider's schedule and write visit summaries
+Physician = Annotated[CurrentUser, Depends(require("physician", "admin"))]
+# Clinical staff: may read symptoms, triage and lab results, and request lab tests
+Staff = Annotated[CurrentUser, Depends(require("clinician", "physician", "admin"))]
+Admin = Annotated[CurrentUser, Depends(require("admin"))]

@@ -51,6 +51,8 @@ export interface TriageRecord {
   urgency: Urgency
   overridden: boolean
   suggested_specialty: string | null
+  /** Tests the symptoms suggest (fixed rules), e.g. ["blood", "ultrasound"] */
+  suggested_tests?: ExamType[]
   red_flags: string[]
   summary: string
   latency_ms: number | null
@@ -80,6 +82,9 @@ export interface LabResult {
 export interface LabReport {
   id: number
   appointment_id: number
+  exam_type?: ExamType
+  /** When the test was done (YYYY-MM-DD), if known */
+  taken_on?: string | null
   content_type: string
   status: LabStatus
   uploaded_at: string
@@ -97,6 +102,7 @@ export interface LabReport {
 /** Limited report metadata returned to lab technicians; no extracted results or AI summaries. */
 export interface WorklistReport {
   id: number
+  exam_type?: ExamType
   status: LabStatus
   uploaded_at: string
   lab_urgency: Urgency | null
@@ -140,6 +146,11 @@ export interface QueueEntry {
   awaiting_approval?: boolean
   /** The patient said none of the proposed times work ('' when they gave no reason) */
   offer_declined_note?: string | null
+  /** Suggested tests and what is on file; tests requested from the lab */
+  lab_needs?: LabNeed[]
+  lab_requests?: LabRequestSummary[]
+  /** The physician's summary once the visit is completed */
+  visit_summary?: string | null
 }
 
 // Every API call resolves to this instead of throwing, so pages can show the server's message.
@@ -148,7 +159,48 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting'
 
-export type Role = 'patient' | 'clinician' | 'admin' | 'lab_tech'
+export type Role = 'patient' | 'clinician' | 'physician' | 'admin' | 'lab_tech'
+
+export type ExamType = 'blood' | 'urine' | 'ultrasound' | 'xray' | 'ct' | 'mri' | 'ecg' | 'other'
+
+/** A suggested test and what is on file for it (last 40 days counts as recent) */
+export interface LabNeed {
+  exam_type: ExamType
+  status: 'recent' | 'outdated' | 'missing' | 'requested'
+}
+
+export interface LabRequestSummary {
+  id: number
+  exam_type: ExamType
+  urgency: Urgency
+  status: 'requested' | 'scheduled' | 'completed' | 'cancelled'
+  requested_at: string
+  /** For the lab; null in the patient's view */
+  note: string | null
+}
+
+/** A lab request as the lab technician sees it (no symptoms or AI summaries) */
+export interface LabRequestEntry extends LabRequestSummary {
+  appointment_id: number
+  patient_label: string
+  requested_by_role: string
+  visit_starts_at: string
+  provider_name: string
+}
+
+export interface Provider {
+  id: number
+  name: string
+  specialty: string
+}
+
+export interface AdminUser {
+  id: number
+  email: string
+  role: Role
+  provider_id: number | null
+  provider_name: string | null
+}
 
 export interface User {
   id: number
@@ -171,6 +223,15 @@ export interface MyAppointment {
   /** The care team declined the request (status is then 'cancelled'), with their reason if given */
   declined?: boolean
   decline_reason?: string | null
+  /** What the visit is about: the priority and the summary of the patient's symptoms */
+  priority?: Urgency | null
+  reason_summary?: string | null
+  lab_needs?: LabNeed[]
+  lab_requests?: LabRequestSummary[]
+  lab_report_count?: number
+  /** Written by the physician when the visit is completed */
+  visit_summary?: string | null
+  completed_at?: string | null
   /** Times the care team proposed (up to three); the patient accepts one or declines them all */
   pending_offers?: PendingOffer[]
   /** The first of them */
@@ -255,9 +316,20 @@ export interface Api {
   /** Calls onQueue with the full queue on connect and after every change. Returns unsubscribe. */
   subscribeQueue(onQueue: (queue: QueueEntry[]) => void, onStatus: (s: StreamStatus) => void): () => void
   review(triageId: number, finalUrgency: Urgency): Promise<ApiResult<TriageRecord>>
-  uploadLabReport(appointmentId: number, file: File): Promise<ApiResult<LabReport>>
+  uploadLabReport(appointmentId: number, file: File, details?: { examType?: ExamType; takenOn?: string }): Promise<ApiResult<LabReport>>
   labWorklist(date: string): Promise<ApiResult<LabWorklistEntry[]>>
-  uploadLabReportAsTech(appointmentId: number, file: File): Promise<ApiResult<LabReport>>
+  uploadLabReportAsTech(appointmentId: number, file: File, details?: { examType?: ExamType; requestId?: number }): Promise<ApiResult<LabReport>>
+  /** Clinical staff ask the lab for a test, with an urgency and a note for the lab */
+  requestLab(appointmentId: number, examType: ExamType, urgency: Urgency, note: string): Promise<ApiResult<LabRequestSummary>>
+  /** Lab technician: open requests (most urgent first) or recently done ones */
+  labRequests(state: 'open' | 'done'): Promise<ApiResult<LabRequestEntry[]>>
+  updateLabRequest(requestId: number, status: 'scheduled' | 'cancelled'): Promise<ApiResult<LabRequestSummary>>
+  /** Physician: their own upcoming visits, then those completed in the last two weeks */
+  physicianSchedule(): Promise<ApiResult<QueueEntry[]>>
+  completeVisit(appointmentId: number, summary: string): Promise<ApiResult<Appointment>>
+  providers(): Promise<ApiResult<Provider[]>>
+  adminUsers(): Promise<ApiResult<AdminUser[]>>
+  updateUser(userId: number, role: Role, providerId: number | null): Promise<ApiResult<AdminUser>>
   labReports(appointmentId: number): Promise<ApiResult<LabReport[]>>
   approveLabExplanation(reportId: number, text: string): Promise<ApiResult<LabReport>>
   /** The original file (clinicians), for checking extracted values against it */

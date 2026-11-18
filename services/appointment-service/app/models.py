@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -91,6 +92,8 @@ class TriageRecord(BaseModel):
     tokens_used: int | None = None
     created_at: datetime
     reviewed_at: datetime | None
+    # Tests the symptoms suggest (fixed rules, app/lab_needs.py), e.g. ["blood", "ultrasound"]
+    suggested_tests: list[str] = []
 
 
 class Assessment(BaseModel):
@@ -100,6 +103,34 @@ class Assessment(BaseModel):
     # The latest a visit should be: the patient may only request times within this many hours,
     # unless nothing at all is free that soon
     max_within_hours: int
+
+
+ExamType = Literal["blood", "urine", "ultrasound", "xray", "ct", "mri", "ecg", "other"]
+
+
+class LabNeed(BaseModel):
+    """A suggested test and what is on file: recent (last 40 days), outdated, missing, or
+    requested from the lab."""
+
+    exam_type: ExamType
+    status: Literal["recent", "outdated", "missing", "requested"]
+
+
+class LabRequestCreate(BaseModel):
+    exam_type: ExamType
+    urgency: Urgency
+    # For the lab: what to test and why. Not shown to the patient.
+    note: str | None = Field(default=None, max_length=500)
+
+
+class LabRequestSummary(BaseModel):
+    id: int
+    exam_type: ExamType
+    urgency: Urgency
+    status: Literal["requested", "scheduled", "completed", "cancelled"]
+    requested_at: datetime
+    # Staff only; None in the patient's view
+    note: str | None = None
 
 
 class TriageReview(BaseModel):
@@ -131,6 +162,11 @@ class QueueEntry(BaseModel):
     awaiting_approval: bool = False
     # The patient said none of the proposed times work, and why (until new times are proposed)
     offer_declined_note: str | None = None
+    # Suggested tests and whether a recent result is on file; open and done lab requests
+    lab_needs: list[LabNeed] = []
+    lab_requests: list[LabRequestSummary] = []
+    # The physician's summary once the visit is completed
+    visit_summary: str | None = None
 
 
 class QueueLab(BaseModel):
@@ -184,6 +220,16 @@ class MyAppointment(BaseModel):
     # The care team declined the request (status is then "cancelled"); the reason, if they gave one
     declined: bool = False
     decline_reason: str | None = None
+    # What the visit is about: the triage priority and summary of the patient's symptoms
+    priority: Urgency | None = None
+    reason_summary: str | None = None
+    # Suggested tests and what is on file; tests the care team asked the lab for
+    lab_needs: list[LabNeed] = []
+    lab_requests: list[LabRequestSummary] = []
+    lab_report_count: int = 0
+    # Written by the physician when the visit is completed
+    visit_summary: str | None = None
+    completed_at: datetime | None = None
     # Times the care team proposed (at most three); the patient accepts one or declines them all
     pending_offers: list[PendingOffer] = []
     # The first of them, for older clients
@@ -277,3 +323,49 @@ class ScheduleOptions(BaseModel):
 
 class RescheduleRequest(BaseModel):
     slot_id: int = Field(gt=0)
+
+
+class VisitCompletion(BaseModel):
+    # What the patient reads afterwards: findings, advice, next steps
+    summary: str = Field(min_length=1, max_length=3000)
+
+
+class Provider(BaseModel):
+    id: int
+    name: str
+    specialty: str
+
+
+class AdminUser(BaseModel):
+    id: int
+    email: str
+    role: Literal["patient", "clinician", "physician", "admin", "lab_tech"]
+    provider_id: int | None
+    provider_name: str | None
+
+
+class AdminUserUpdate(BaseModel):
+    role: Literal["patient", "clinician", "physician", "admin", "lab_tech"]
+    # Required for a physician: whose schedule they see
+    provider_id: int | None = Field(default=None, gt=0)
+
+
+class LabRequestEntry(BaseModel):
+    """A lab request as the lab technician sees it: what, how urgent, for whom and when. No
+    symptoms or AI summaries."""
+
+    id: int
+    appointment_id: int
+    patient_label: str
+    exam_type: ExamType
+    urgency: Urgency
+    note: str | None
+    status: Literal["requested", "scheduled", "completed", "cancelled"]
+    requested_at: datetime
+    requested_by_role: str
+    visit_starts_at: datetime
+    provider_name: str
+
+
+class LabRequestUpdate(BaseModel):
+    status: Literal["scheduled", "cancelled"]

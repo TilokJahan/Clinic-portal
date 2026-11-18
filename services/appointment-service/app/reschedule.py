@@ -16,6 +16,7 @@ from psycopg import errors
 
 from app import db, metrics, urgency
 from app.auth import Clinician, Patient
+from app.lab_needs import LAB_NEEDS_SQL, LAB_REQUESTS_SQL
 from app.metrics import STREAM_CLIENTS
 from app.models import (
     MyAppointment,
@@ -50,7 +51,11 @@ _MY_APPOINTMENTS_SQL = f"""
     SELECT a.id, a.slot_id, a.status, a.created_at, s.starts_at,
            p.name AS provider_name, p.specialty, t.id IS NOT NULL AS intake_submitted,
            a.approved_at IS NOT NULL AS approved, a.declined_at IS NOT NULL AS declined,
-           a.decline_reason, po.offers
+           a.decline_reason, po.offers,
+           coalesce(t.final_urgency, t.ai_urgency) AS priority, t.summary AS reason_summary,
+           {LAB_NEEDS_SQL} AS lab_needs, {LAB_REQUESTS_SQL} AS lab_requests,
+           (SELECT count(*) FROM lab_reports r WHERE r.appointment_id = a.id) AS lab_report_count,
+           a.visit_summary, a.completed_at
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN providers p ON p.id = s.provider_id
@@ -128,6 +133,9 @@ def _to_my_appointments(rows: list[dict]) -> list[MyAppointment]:
     for row in rows:
         offers = [PendingOffer(**o) for o in row["offers"] or []]
         fields = {k: v for k, v in row.items() if k != "offers"}
+        # The note on a lab request is for the lab, not the patient
+        fields["lab_requests"] = [{**q, "note": None} for q in row["lab_requests"] or []]
+        fields["lab_needs"] = row["lab_needs"] or []
         result.append(
             MyAppointment(
                 **fields, pending_offers=offers, pending_offer=offers[0] if offers else None

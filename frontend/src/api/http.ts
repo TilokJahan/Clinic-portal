@@ -89,17 +89,30 @@ export const httpApi: Api = {
   subscribeMyAppointments: (onAppointments, onStatus) =>
     subscribe('/appointments/stream', 'appointments', onAppointments, onStatus),
   review: (triageId, finalUrgency) => request(`/triage/${triageId}`, json('PATCH', { final_urgency: finalUrgency })),
-  uploadLabReport(appointmentId, file) {
+  uploadLabReport(appointmentId, file, details) {
     const form = new FormData()
     form.append('file', file)
+    if (details?.examType) form.append('exam_type', details.examType)
+    if (details?.takenOn) form.append('taken_on', details.takenOn)
     return request(`/appointments/${appointmentId}/lab-reports`, { method: 'POST', body: form }, false)
   },
   labWorklist: (date) => request(`/lab/worklist?${new URLSearchParams({ date })}`),
-  uploadLabReportAsTech(appointmentId, file) {
+  uploadLabReportAsTech(appointmentId, file, details) {
     const form = new FormData()
     form.append('file', file)
+    if (details?.examType) form.append('exam_type', details.examType)
+    if (details?.requestId) form.append('request_id', String(details.requestId))
     return request(`/lab/appointments/${appointmentId}/reports`, { method: 'POST', body: form }, false)
   },
+  requestLab: (appointmentId, examType, urgency, note) =>
+    request(`/appointments/${appointmentId}/lab-requests`, json('POST', { exam_type: examType, urgency, note: note || null })),
+  labRequests: (state) => request(`/lab/requests?status=${state}`),
+  updateLabRequest: (requestId, status) => request(`/lab/requests/${requestId}`, json('PATCH', { status })),
+  physicianSchedule: () => request('/physician/schedule'),
+  completeVisit: (appointmentId, summary) => request(`/appointments/${appointmentId}/complete`, json('POST', { summary })),
+  providers: () => request('/providers'),
+  adminUsers: () => request('/admin/users'),
+  updateUser: (userId, role, providerId) => request(`/admin/users/${userId}`, json('PATCH', { role, provider_id: providerId })),
   labReports: (appointmentId) => request(`/appointments/${appointmentId}/lab-reports`),
   approveLabExplanation: (reportId, text) =>
     request(`/lab-reports/${reportId}`, json('PATCH', { patient_explanation: text })),

@@ -326,7 +326,7 @@ def test_worklist_lists_scheduled_visits_without_clinical_data(client, db, lab_s
     assert first["provider_name"] == "Dr. One" and first["status"] == "booked"
     assert second["status"] == "checked_in" and second["reports"] == []
     [report] = first["reports"]
-    assert set(report) == {"id", "status", "uploaded_at", "lab_urgency", "reason"}
+    assert set(report) == {"id", "exam_type", "status", "uploaded_at", "lab_urgency", "reason"}
     assert report["status"] == "ready" and report["lab_urgency"] == "urgent"
     # Who, when and with whom: nothing else. No symptoms, triage, names or emails.
     assert set(first) == {

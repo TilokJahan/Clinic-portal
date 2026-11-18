@@ -6,6 +6,7 @@ from typing import Any
 
 import psycopg
 
+from app.lab_needs import LAB_NEEDS_SQL, LAB_REQUESTS_SQL
 from app.metrics import STREAM_CLIENTS
 from app.models import QueueEntry, QueueLab, TriageRecord, Urgency
 from app.reschedule import OFFER_PENDING
@@ -14,7 +15,8 @@ from app.urgency import EFFECTIVE_URGENCY, SEEN_WITHIN_HOURS
 TRIAGE_COLUMNS = """
     t.id, t.appointment_id, t.ai_urgency, t.final_urgency,
     coalesce(t.final_urgency, t.ai_urgency) AS urgency, t.overridden, t.suggested_specialty,
-    t.red_flags, t.summary, t.latency_ms, t.tokens_used, t.created_at, t.reviewed_at
+    t.red_flags, t.summary, t.latency_ms, t.tokens_used, t.created_at, t.reviewed_at,
+    t.suggested_tests
 """
 
 # The latest an urgent or soon visit should happen. Visits further away than this are flagged so
@@ -34,7 +36,7 @@ MISSED_AFTER_HOURS = 12
 # Waiting patients (checked in, or booked and not long past). Most urgent first; within the same
 # urgency, whoever sent their intake or lab report first; patients with neither go last, by
 # appointment time.
-QUEUE_SQL = f"""
+ENTRY_SELECT = f"""
     SELECT a.id AS appointment_id, a.patient_id, a.status, a.created_at AS booked_at,
            s.starts_at, p.id AS provider_id, p.name AS provider_name,
            to_jsonb(t) || jsonb_build_object('urgency', coalesce(t.final_urgency, t.ai_urgency))
@@ -54,7 +56,10 @@ QUEUE_SQL = f"""
            -- The latest proposal answer: the patient declined the times ('' with no note)
            (SELECT CASE WHEN o.status = 'declined' THEN coalesce(o.patient_note, '') END
             FROM reschedule_offers o WHERE o.appointment_id = a.id
-            ORDER BY o.created_at DESC, o.id DESC LIMIT 1) AS offer_declined_note
+            ORDER BY o.created_at DESC, o.id DESC LIMIT 1) AS offer_declined_note,
+           {LAB_NEEDS_SQL} AS lab_needs,
+           {LAB_REQUESTS_SQL} AS lab_requests,
+           a.visit_summary
     FROM appointments a
     JOIN slots s ON s.id = a.slot_id
     JOIN providers p ON p.id = s.provider_id
@@ -63,6 +68,10 @@ QUEUE_SQL = f"""
         SELECT * FROM lab_reports lr WHERE lr.appointment_id = a.id
         ORDER BY lr.uploaded_at DESC LIMIT 1
     ) l ON true
+"""
+
+QUEUE_SQL = f"""
+    {ENTRY_SELECT}
     WHERE a.status = 'checked_in'
        OR (a.status = 'booked'
            AND s.starts_at > now() - interval '{MISSED_AFTER_HOURS} hours')
@@ -95,6 +104,9 @@ def to_entry(row: dict[str, Any]) -> QueueEntry:
         offer_pending=bool(row.get("offer_pending")),
         awaiting_approval=bool(row.get("awaiting_approval")),
         offer_declined_note=row.get("offer_declined_note"),
+        lab_needs=row.get("lab_needs") or [],
+        lab_requests=row.get("lab_requests") or [],
+        visit_summary=row.get("visit_summary"),
     )
 
 

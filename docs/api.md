@@ -24,6 +24,13 @@ Every change to this file goes through a pull request that all three of us revie
 | POST | `/lab/appointments/{id}/reports` | appointment | lab_tech / admin | Upload a lab report for any scheduled patient | done |
 | GET | `/appointments/{id}/lab-reports` | appointment | patient (own) / clinician | Lab reports and results (not lab techs) | done |
 | PATCH | `/lab-reports/{id}` | appointment | clinician | Approve (and edit) the patient explanation | done |
+| POST | `/appointments/{id}/lab-requests` | appointment | clinician, physician | Ask the lab for a test, with an urgency | done |
+| GET | `/lab/requests?status=open\|done` | appointment | lab_tech | The lab's requests, most urgent first | done |
+| PATCH | `/lab/requests/{id}` | appointment | lab_tech | Mark a request scheduled or cancelled | done |
+| GET | `/physician/schedule` | appointment | physician | The physician's own upcoming and recent visits | done |
+| POST | `/appointments/{id}/complete` | appointment | physician | Complete a visit with a summary for the patient | done |
+| GET | `/providers` | appointment | any | The doctors | done |
+| GET, PATCH | `/admin/users`, `/admin/users/{id}` | appointment | admin | Users and roles; link a physician to a schedule | done |
 | GET | `/appointments/{id}/earlier-slots` | appointment | clinician | Free earlier slots with any provider (max 10) | done |
 | GET | `/appointments/{id}/alternative-slots` | appointment | clinician | Times that may be proposed: any doctor, within the priority (max 12) | done |
 | POST | `/appointments/{id}/proposals` | appointment | clinician | Propose one to three times (replaces earlier proposals) | done |
@@ -135,7 +142,7 @@ The backend's `AUTH_MODE` picks how tokens are issued; the endpoints work the sa
 | `entra-external-id` | cloud | Sign in with Microsoft Entra External ID (hosted email + password sign-up/sign-in) and send the **ID token**. The backend checks the tenant's signature, issuer and audience (`ENTRA_CLIENT_ID`) and needs an email claim |
 
 - In `entra-external-id` mode a first-time user is created as a `patient`. Emails listed in the
-  operator settings `CLINICIAN_EMAILS` / `LAB_TECH_EMAILS` / `ADMIN_EMAILS` get that role when they
+  operator settings `CLINICIAN_EMAILS` / `PHYSICIAN_EMAILS` / `LAB_TECH_EMAILS` / `ADMIN_EMAILS` get that role when they
   sign in (an email on several lists gets the most privileged role). A token
   can never change anyone's role.
 - `GET /queue/stream` and `GET /appointments/stream` also accept the token as
@@ -520,3 +527,34 @@ manually") was returned instead. The appointment service stores `tokens_used` wi
 ## Tables
 
 See [schema.md](schema.md) for the full schema and the rules the database enforces.
+
+
+## Roles, kinds of tests and lab requests (schema v9)
+
+**Roles.** `patient`, `clinician` (triage and booking approval: the live queue), `physician`
+(a doctor, linked by an admin to one provider's schedule), `lab_tech` and `admin` (every staff
+page, plus users and roles). Clinical data (symptoms, triage, lab results) is readable by
+clinicians, physicians and admins; lab technicians see only labels, times and test requests.
+
+**Kinds of tests.** Lab reports have an `exam_type`: `blood`, `urine`, `ultrasound`, `xray`,
+`ct`, `mri`, `ecg` or `other`, and an optional `taken_on` date. Uploads take both as form
+fields (`exam_type`, `taken_on`; the lab's upload also takes `request_id`). Blood and urine
+reports go through OCR and the rules; imaging and ECG reports are stored as `needs_review` for a
+clinician or physician to read and explain.
+
+**Suggested tests.** Fixed keyword rules (`app/lab_needs.py`) read the symptoms at assessment or
+intake and store `suggested_tests` on the triage result; the text itself is never stored. The
+booking page then asks for a recent result (the last 40 days). Queue entries and the patient's
+appointments carry `lab_needs`: for each suggested test, `recent`, `outdated` (only older than
+40 days), `missing` or `requested`.
+
+**Lab requests.** `POST /appointments/{id}/lab-requests` with `{"exam_type": "ultrasound",
+"urgency": "urgent", "note": "For the lab"}` (one open request per kind of test, 409 otherwise).
+The lab sees `GET /lab/requests` most urgent first, can mark one `scheduled` or `cancelled`, and
+completes it by uploading the result with `request_id`. Patients see their requests without the
+note.
+
+**Physicians.** `GET /physician/schedule` lists the linked provider's visits from today on, then
+those completed in the last 14 days (`QueueEntry`). `POST /appointments/{id}/complete` with
+`{"summary": "..."}` needs an approved booking on their schedule; the patient sees
+`visit_summary` and `completed_at` on `GET /appointments`.
