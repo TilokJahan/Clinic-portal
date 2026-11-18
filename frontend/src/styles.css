@@ -1710,3 +1710,9 @@ a.patient-footer-item:hover > span > span { color: var(--teal-deep); text-decora
 .privilege-head { color: #71858f; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .privilege-head span:not(:first-child) { color: #71858f; }
 @media (max-width: 760px) { .invite-fields { grid-template-columns: 1fr; } }
+.propose-calendar { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin: 8px 0 12px; }
+.calendar-day { display: grid; gap: 2px; padding: 8px 6px; text-align: center; background: #fff; border: 1px solid #e8e4ed; border-radius: 8px; color: #482071; font-size: 12px; cursor: pointer; }
+.calendar-day small { color: #71858f; }
+.calendar-day em { font-style: normal; font-size: 10px; font-weight: 700; color: #fff; background: #8b42f3; border-radius: 999px; padding: 1px 6px; justify-self: center; }
+.calendar-day.chosen { border-color: #8b42f3; background: #f2eef8; box-shadow: 0 0 0 2px #e6dcf6; }
+.calendar-day:disabled { cursor: not-allowed; opacity: .55; background: #f6f4f8; border-style: dashed; }

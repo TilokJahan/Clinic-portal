@@ -7,11 +7,11 @@ decides a race, so two patients can never end up in the same slot.
 
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Annotated
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg import errors
 
 from app import db, metrics, urgency
@@ -27,7 +27,7 @@ from app.models import (
     RescheduleOfferCreate,
     Slot,
 )
-from app.urgency import EFFECTIVE_URGENCY, OPEN_TO_ALL
+from app.urgency import CLINIC_TIME_ZONE, EFFECTIVE_URGENCY, OPEN_TO_ALL
 
 router = APIRouter()
 Conn = Annotated[psycopg.Connection, Depends(db.get_conn)]
@@ -215,9 +215,22 @@ _PROPOSABLE = """
 
 
 @router.get("/appointments/{appointment_id}/alternative-slots")
-def alternative_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slot]:
-    """Times the clinician can propose instead of the requested one (at most 12), soonest first;
-    at the same time, the patient's own provider comes first."""
+def alternative_slots(
+    conn: Conn,
+    _: Clinician,
+    appointment_id: int,
+    day: Annotated[
+        date | None, Query(alias="date", description="Only this day (YYYY-MM-DD, clinic time)")
+    ] = None,
+    every: Annotated[
+        bool, Query(alias="all", description="Every proposable time, for a calendar view")
+    ] = False,
+) -> list[Slot]:
+    """Times the clinician can propose instead of the requested one, soonest first; at the same
+    time, the patient's own provider comes first. Without a date, the 12 earliest (often all on
+    the next day); with a date, every proposable time that day, so a routine visit can be
+    proposed further out (up to its two weeks). With all=true, every proposable time in the
+    priority's window, for the calendar in the clinician's drawer."""
     current = _booked_appointment(conn, appointment_id)
     rows = conn.execute(
         f"""
@@ -225,13 +238,17 @@ def alternative_slots(conn: Conn, _: Clinician, appointment_id: int) -> list[Slo
                NOT {OPEN_TO_ALL} AS reserved
         FROM slots s JOIN providers p ON p.id = s.provider_id
         WHERE {_PROPOSABLE}
+          AND (%(day)s::date IS NULL
+               OR (s.starts_at AT TIME ZONE '{CLINIC_TIME_ZONE}')::date = %(day)s::date)
         ORDER BY s.starts_at, s.provider_id <> %(provider)s, s.provider_id
-        LIMIT 12
+        LIMIT %(max)s
         """,
         {
             "limit": timedelta(hours=_limit_hours(conn, appointment_id)),
             "current": current["starts_at"],
             "provider": current["provider_id"],
+            "day": day,
+            "max": 500 if every else 12 if day is None else 60,
         },
     ).fetchall()
     return [Slot(**row) for row in rows]

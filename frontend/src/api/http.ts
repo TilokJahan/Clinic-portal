@@ -151,7 +151,13 @@ export const httpApi: Api = {
     request(`/appointments/${appointmentId}/reschedule-offers`, json('POST', { slot_id: slotId })),
   acceptOffer: (offerId) => request(`/reschedule-offers/${offerId}/accept`, { method: 'POST' }),
   declineOffer: (offerId, note) => request(`/reschedule-offers/${offerId}/decline`, json('POST', { note: note || null })),
-  alternativeSlots: (appointmentId) => request(`/appointments/${appointmentId}/alternative-slots`),
+  alternativeSlots(appointmentId, options) {
+    const params = new URLSearchParams()
+    if (options?.date) params.set('date', options.date)
+    if (options?.all) params.set('all', 'true')
+    const query = params.toString()
+    return request(`/appointments/${appointmentId}/alternative-slots${query ? `?${query}` : ''}`)
+  },
   propose: (appointmentId, slotIds) =>
     request(`/appointments/${appointmentId}/proposals`, json('POST', { slot_ids: slotIds })),
   async labReportFile(reportId) {

@@ -253,8 +253,11 @@ A clinician decides a request from the queue, where it has `"awaiting_approval":
 ### Proposing other times (clinician) and answering them (patient)
 
 - `GET /appointments/{id}/alternative-slots`: free, upcoming times with **any** doctor that fit
-  the patient's priority (or are at least earlier than the current visit), soonest first, at
-  most 12. Includes the urgent reserve.
+  the patient's priority (or are at least earlier than the current visit), soonest first.
+  Includes the urgent reserve. By default the 12 earliest (often all on the next day);
+  `?date=YYYY-MM-DD` every time that day (clinic time); `?all=true` every time in the
+  priority's window, which the clinician's drawer shows as a calendar of days, so a routine
+  visit can be proposed up to two weeks out.
 - `POST /appointments/{id}/proposals` with `{"slot_ids": [4, 9]}` (one to three, different):
   returns the `RescheduleOffer[]`. New proposals replace any still open. 422 for a time later
   than the priority allows, 409 for a booked or started one.

@@ -705,7 +705,8 @@ export const mockApi: Api = {
     notify()
     return ok({ id: offer.id, status: 'declined' })
   },
-  async alternativeSlots(appointmentId) {
+  async alternativeSlots(appointmentId, options) {
+    const date = options?.date
     await pause(200)
     const appt = appointments.find((a) => a.id === appointmentId)
     if (!appt) return fail(404, 'Appointment not found')
@@ -714,7 +715,8 @@ export const mockApi: Api = {
     const limit = limitFor(queue().find((e) => e.appointment_id === appointmentId)?.urgency ?? null)
     return ok(freeSlotsWithin(14 * 24, undefined, 400, true)
       .filter((s) => Date.parse(s.starts_at) <= Date.now() + limit * 3_600_000 || s.starts_at < current.starts_at)
-      .slice(0, 12))
+      .filter((s) => !date || new Date(s.starts_at).toLocaleDateString('en-CA') === date)
+      .slice(0, options?.all ? 500 : date ? 60 : 12))
   },
   async propose(appointmentId, slotIds) {
     await pause(300)

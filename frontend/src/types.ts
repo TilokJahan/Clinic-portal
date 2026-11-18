@@ -399,7 +399,8 @@ export interface Api {
   earlierSlots(appointmentId: number): Promise<ApiResult<Slot[]>>
   offerEarlierVisit(appointmentId: number, slotId: number): Promise<ApiResult<RescheduleOffer>>
   /** Times the clinician may propose: free, any doctor, within the patient's priority */
-  alternativeSlots(appointmentId: number): Promise<ApiResult<Slot[]>>
+  /** The earliest 12, every one on a date, or every one in the priority's window (all) */
+  alternativeSlots(appointmentId: number, options?: { date?: string; all?: boolean }): Promise<ApiResult<Slot[]>>
   /** Propose one to three times; they replace any proposed before */
   propose(appointmentId: number, slotIds: number[]): Promise<ApiResult<RescheduleOffer[]>>
   acceptOffer(offerId: number): Promise<ApiResult<MyAppointment>>
